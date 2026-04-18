@@ -103,6 +103,9 @@
       assignedToEmail: d.assignedToEmail || '',
       assignedAt:      toISO(d.assignedAt),
       reference_lead_id: d.reference_lead_id || '',
+      deleted:           d.deleted === true,
+      deletedAt:         d.deletedAt?.toDate ? d.deletedAt.toDate().toISOString() : '',
+      deletedBy:         d.deletedBy || '',
     };
   };
 
@@ -142,6 +145,8 @@
       assignedTo:          lead.assignedTo      || 'Unassigned',
       assignedToEmail:     lead.assignedToEmail || '',
       reference_lead_id:   lead.reference_lead_id || '',
+      // ── Soft-delete: always write deleted:false on create/update (trash sets it separately) ──
+      deleted:             false,
       // assignedAt: only write when actually assigning
       ...(lead._setAssignedAt ? { assignedAt: serverTimestamp() } : {}),
     };
@@ -161,7 +166,7 @@
   window.buildLeadsQuery = (filters = {}, pageSize = PAGE_SIZE_DEFAULT, afterSnap = null, beforeSnap = null) => {
     const ref = collection(db, 'leads');
     const tenantId = window._currentTenantId || '';
-    const constraints = [ orderBy('createdAt', 'desc'), where('tenant_id', '==', tenantId) ];
+    const constraints = [ orderBy('createdAt', 'desc'), where('tenant_id', '==', tenantId), where('deleted', '==', false) ];
     if (filters.status)   constraints.push(where('status',      '==', filters.status));
     if (filters.service)  constraints.push(where('service',     '==', filters.service));
     if (filters.industry) constraints.push(where('industry',    '==', filters.industry));
@@ -181,7 +186,7 @@
   window.dbCountLeads = async (filters = {}) => {
     const ref = collection(db, 'leads');
     const tenantId = window._currentTenantId || '';
-    const constraints = [ where('tenant_id', '==', tenantId) ];
+    const constraints = [ where('tenant_id', '==', tenantId), where('deleted', '==', false) ];
     if (filters.status)   constraints.push(where('status',      '==', filters.status));
     if (filters.service)  constraints.push(where('service',     '==', filters.service));
     if (filters.industry) constraints.push(where('industry',    '==', filters.industry));
@@ -194,11 +199,11 @@
   window.dbCountAllStatuses = async () => {
     const ref = collection(db, 'leads');
     const tenantId = window._currentTenantId || '';
-    const tenantQuery = query(ref, where('tenant_id', '==', tenantId));
+    const tenantQuery = query(ref, where('tenant_id', '==', tenantId), where('deleted', '==', false));
     const statuses = ['New','Contacted','Discovery Call','Qualified','Proposal Sent','Negotiation','Won','Lost'];
     const [totalSnap, ...statusSnaps] = await Promise.all([
       getCountFromServer(tenantQuery),
-      ...statuses.map(s => getCountFromServer(query(ref, where('tenant_id','==',tenantId), where('status','==',s))))
+      ...statuses.map(s => getCountFromServer(query(ref, where('tenant_id','==',tenantId), where('deleted','==',false), where('status','==',s))))
     ]);
     const result = { ALL: totalSnap.data().count };
     statuses.forEach((s,i) => { result[s] = statusSnaps[i].data().count; });
@@ -210,7 +215,7 @@
       if (lastPage) {
         const ref = collection(db, 'leads');
         const tenantId = window._currentTenantId || '';
-        const constraints = [ orderBy('createdAt', 'desc'), where('tenant_id', '==', tenantId) ];
+        const constraints = [ orderBy('createdAt', 'desc'), where('tenant_id', '==', tenantId), where('deleted', '==', false) ];
         if (filters.status)   constraints.push(where('status',      '==', filters.status));
         if (filters.service)  constraints.push(where('service',     '==', filters.service));
         if (filters.industry) constraints.push(where('industry',    '==', filters.industry));
@@ -235,6 +240,7 @@
     const q = query(
       collection(db, 'leads'),
       where('tenant_id', '==', tenantId),
+      where('deleted', '==', false),
       where('status', '==', status),
       orderBy('createdAt', 'desc'),
       limit(200)
@@ -246,7 +252,7 @@
   window.dbSearchLeads = async (searchTerm, filters = {}, maxDocs = 500) => {
     const ref = collection(db, 'leads');
     const tenantId = window._currentTenantId || '';
-    const constraints = [ orderBy('createdAt', 'desc'), where('tenant_id', '==', tenantId), limit(maxDocs) ];
+    const constraints = [ orderBy('createdAt', 'desc'), where('tenant_id', '==', tenantId), where('deleted', '==', false), limit(maxDocs) ];
     if (filters.status)   constraints.push(where('status',      '==', filters.status));
     if (filters.service)  constraints.push(where('service',     '==', filters.service));
     if (filters.industry) constraints.push(where('industry',    '==', filters.industry));
@@ -283,13 +289,62 @@
 
   window.dbLoadAll = async () => {
     const tenantId = window._currentTenantId || '';
-    const snap = await getDocs(query(collection(db, 'leads'), where('tenant_id', '==', tenantId), orderBy('createdAt', 'desc')));
+    const snap = await getDocs(query(collection(db, 'leads'), where('tenant_id', '==', tenantId), where('deleted', '==', false), orderBy('createdAt', 'desc')));
     return snap.docs.map(d => window.docToLead(d));
   };
 
   window.dbGetLead = async (docId) => {
     const snap = await getDoc(doc(db, 'leads', docId));
     return snap.exists() ? window.docToLead(snap) : null;
+  };
+
+  /* ─── Soft Delete / Trash ─── */
+  window.dbSoftDeleteLead = async (docId, deletedBy = '') => {
+    await updateDoc(doc(db, 'leads', docId), {
+      deleted:             true,
+      deletedAt:           serverTimestamp(),
+      deletedBy:           deletedBy,
+      lastUpdateTimestamp: serverTimestamp(),
+    });
+  };
+
+  window.dbRestoreLead = async (docId) => {
+    await updateDoc(doc(db, 'leads', docId), {
+      deleted:             false,
+      deletedAt:           null,
+      deletedBy:           '',
+      lastUpdateTimestamp: serverTimestamp(),
+    });
+  };
+
+  window.dbPermanentDeleteLead = async (docId) => {
+    await deleteDoc(doc(db, 'leads', docId));
+  };
+
+  window.dbLoadTrash = async () => {
+    const tenantId = window._currentTenantId || '';
+    const snap = await getDocs(query(
+      collection(db, 'leads'),
+      where('tenant_id', '==', tenantId),
+      where('deleted',   '==', true),
+      orderBy('deletedAt', 'desc'),
+      limit(300)
+    ));
+    return snap.docs.map(d => {
+      const lead = window.docToLead(d);
+      // deletedAt / deletedBy already mapped in docToLead
+      return lead;
+    });
+  };
+
+  window.dbCountTrash = async () => {
+    const tenantId = window._currentTenantId || '';
+    const snap = await getCountFromServer(query(
+      collection(db, 'leads'),
+      where('tenant_id', '==', tenantId),
+      where('deleted',   '==', true)
+    ));
+    return snap.data().count;
   };
 
   /* ─── Activities ─── */
@@ -673,6 +728,33 @@
     display: flex; align-items: center; justify-content: center; transition: all .14s;
   }
   .icon-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(0,229,160,.06); }
+  .icon-btn-danger:hover { border-color: var(--danger) !important; color: var(--danger) !important; background: rgba(255,77,109,.06) !important; }
+
+  /* ── TRASH ── */
+  .trash-row td { opacity: .82; }
+  .trash-row:hover td { opacity: 1; }
+  .restore-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: rgba(0,229,160,.08); border: 1px solid rgba(0,229,160,.25);
+    color: var(--accent); border-radius: 5px; padding: 4px 10px;
+    font-size: .7rem; font-weight: 600; cursor: pointer; font-family: var(--font);
+    transition: all .15s; white-space: nowrap;
+  }
+  .restore-btn:hover { background: rgba(0,229,160,.18); border-color: var(--accent); }
+  .perm-del-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: rgba(255,77,109,.08); border: 1px solid rgba(255,77,109,.25);
+    color: var(--danger); border-radius: 5px; padding: 4px 10px;
+    font-size: .7rem; font-weight: 600; cursor: pointer; font-family: var(--font);
+    transition: all .15s; white-space: nowrap;
+  }
+  .perm-del-btn:hover { background: rgba(255,77,109,.18); border-color: var(--danger); }
+  .trash-banner {
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(255,77,109,.07); border: 1px solid rgba(255,77,109,.22);
+    border-radius: 8px; padding: 9px 14px; margin-bottom: 14px;
+    font-size: .76rem; color: var(--danger);
+  }
 
   /* ── EXPORT DROPDOWN ── */
   .export-dropdown-wrap { position: relative; }
@@ -1375,6 +1457,12 @@
           Lost <span class="aside-count" id="cnt-lost">—</span>
         </div>
 
+        <!-- TRASH FILTER -->
+        <div class="aside-item" id="trashFilterItem" onclick="toggleTrashMode(this)" title="View deleted leads">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+          Trash <span class="aside-count-danger" id="cnt-trash">—</span>
+        </div>
+
         <!-- OVERDUE FILTER -->
         <div class="aside-item" id="overdueFilterItem" onclick="toggleOverdueFilter(this)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -1710,6 +1798,38 @@
         </div>
       </div>
     </div>
+    <!-- TRASH VIEW -->
+    <div id="trashView" style="display:none;">
+      <div class="trash-banner">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+        <span>Deleted leads — <strong style="color:var(--text);">Restore</strong> recovers a lead. <strong style="color:var(--danger);">Delete Forever</strong> is permanent and cannot be undone.</span>
+        <button onclick="emptyTrash()" style="margin-left:auto;background:rgba(255,77,109,.12);border:1px solid rgba(255,77,109,.3);color:var(--danger);border-radius:5px;padding:5px 14px;font-size:.72rem;cursor:pointer;font-family:var(--font);font-weight:600;display:flex;align-items:center;gap:6px;transition:all .15s;" onmouseover="this.style.background='rgba(255,77,109,.22)'" onmouseout="this.style.background='rgba(255,77,109,.12)'">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          Empty Trash
+        </button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Contact</th>
+              <th>Company</th>
+              <th>Status at Deletion</th>
+              <th>Deleted By</th>
+              <th>Deleted At</th>
+              <th style="min-width:200px;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="trashBody">
+            <tr><td colspan="6"><div class="empty-state">
+              <div class="spinner" style="margin:0 auto 12px;"></div>
+              <p>Loading trash…</p>
+            </div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
   </main>
 </div><!-- end .shell -->
 
@@ -1920,6 +2040,10 @@
     <div class="modal-foot" style="justify-content:space-between;">
       <div style="display:flex;align-items:center;gap:8px;" id="viewNextAction"></div>
       <div style="display:flex;gap:8px;">
+        <button class="pill-btn outline" style="display:flex;align-items:center;gap:6px;font-size:.76rem;border-color:rgba(255,77,109,.35);color:var(--danger);" onclick="softDeleteFromModal()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          Move to Trash
+        </button>
         <button class="pill-btn outline" onclick="closeModal('viewOverlay')">Close</button>
       </div>
     </div>
@@ -2303,6 +2427,12 @@ async function refreshCounts() {
     document.getElementById('cnt-won').textContent         = counts['Won']            || 0;
     document.getElementById('cnt-lost').textContent        = counts['Lost']           || 0;
 
+    // Refresh trash count (non-blocking, best-effort)
+    window.dbCountTrash().then(n => {
+      const el = document.getElementById('cnt-trash');
+      if (el) el.textContent = n || 0;
+    }).catch(() => {});
+
     document.getElementById('s-total').textContent = counts['ALL']       || 0;
     document.getElementById('s-new').textContent   = counts['New']       || 0;
     document.getElementById('s-qual').textContent  = counts['Qualified'] || 0;
@@ -2675,6 +2805,9 @@ function renderTable(leads) {
           <button class="icon-btn" title="Edit" onclick="editLeadById('${esc(l.leadId)}','${esc(l._docId)}')">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
+          <button class="icon-btn icon-btn-danger" title="Move to Trash" onclick="softDeleteLead('${esc(l._docId)}','${esc(l.name||l.email||'')}')">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+          </button>
         </div>
       </td>
     </tr>`;
@@ -2856,6 +2989,9 @@ function renderList(leads) {
         </button>
         <button class="icon-btn" title="Edit"  onclick="editLeadById('${esc(l.leadId)}','${esc(l._docId)}')">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button class="icon-btn icon-btn-danger" title="Move to Trash" onclick="softDeleteLead('${esc(l._docId)}','${esc(l.name||l.email||'')}')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
         </button>
       </div>
     </div>`;
@@ -3740,6 +3876,195 @@ function toggleSidebar() {
     shell?.classList.add('sidebar-collapsed');
   }
 })();
+
+/* ════════════════════════════════════════════════════
+   SOFT DELETE & TRASH
+════════════════════════════════════════════════════ */
+let isTrashMode = false;
+let trashLeads  = [];
+
+/* Toggle trash mode from sidebar */
+function toggleTrashMode(el) {
+  if (isTrashMode) { clearTrashMode(); return; }
+  // Clear competing modes
+  if (isOverdueMode)  clearOverdueFilter();
+  if (isMyLeadsMode)  clearMyLeadsFilter();
+  isSearchMode = false;
+  document.getElementById('searchInput').value = '';
+  document.getElementById('searchModeBanner').classList.remove('show');
+  document.getElementById('overdueModeBanner').classList.remove('show');
+
+  document.querySelectorAll('.aside-item').forEach(i => i.classList.remove('active','active-danger'));
+  el.classList.add('active-danger');
+  isTrashMode = true;
+
+  // Hide normal views; show trash
+  ['tableView','boardView','listView'].forEach(id => document.getElementById(id).style.display = 'none');
+  document.getElementById('trashView').style.display = 'block';
+  document.getElementById('pagination').style.display     = 'none';
+  document.getElementById('listPagination').style.display = 'none';
+
+  loadTrashView();
+}
+
+function clearTrashMode() {
+  isTrashMode = false; trashLeads = [];
+  document.getElementById('trashView').style.display = 'none';
+  document.getElementById('trashFilterItem').classList.remove('active-danger');
+  // Restore All Leads as active
+  const allItem = document.querySelector('.aside-item[onclick*="setStatusFilter(\'\',"]') || document.querySelector('.aside-item');
+  document.querySelectorAll('.aside-item').forEach(i => i.classList.remove('active','active-danger'));
+  if (allItem) allItem.classList.add('active');
+  activeFilters.status = '';
+  resetPagination();
+  loadPage('first');
+}
+
+async function loadTrashView() {
+  document.getElementById('trashBody').innerHTML =
+    '<tr><td colspan="6"><div class="empty-state"><div class="spinner" style="margin:0 auto 12px;"></div><p>Loading…</p></div></td></tr>';
+  try {
+    trashLeads = await window.dbLoadTrash();
+    renderTrash(trashLeads);
+  } catch(e) {
+    document.getElementById('trashBody').innerHTML =
+      `<tr><td colspan="6"><div class="empty-state"><p style="color:var(--danger);">Failed to load trash: ${esc(e.message)}</p></div></td></tr>`;
+    console.error('loadTrashView', e);
+  }
+}
+
+function renderTrash(leads) {
+  const tbody = document.getElementById('trashBody');
+  if (!leads || !leads.length) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">
+      <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.25;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+      <p>Trash is empty.</p>
+    </div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = leads.map(l => `
+    <tr class="trash-row">
+      <td>
+        <div class="lead-name">${esc(l.name||'—')}</div>
+        <div class="lead-sub">${esc(l.email||'')}</div>
+        <div class="lead-id">${esc(l.leadId||'')}</div>
+      </td>
+      <td>
+        <div style="font-weight:600;font-size:.81rem;">${esc(l.company||'—')}</div>
+        ${l.jobtitle ? `<div class="lead-sub">${esc(l.jobtitle)}</div>` : ''}
+      </td>
+      <td>${statusBadge(l.status)}</td>
+      <td style="font-size:.75rem;color:var(--muted);">${esc(l.deletedBy||'—')}</td>
+      <td style="font-size:.72rem;font-family:var(--mono);color:var(--muted);">${l.deletedAt ? esc(fmtDate(l.deletedAt)) : '—'}</td>
+      <td>
+        <div class="row-actions">
+          <button class="restore-btn" onclick="restoreLead('${esc(l._docId)}','${esc(l.name||l.email||'')}')">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4"/></svg>
+            Restore
+          </button>
+          <button class="perm-del-btn" onclick="permanentDelete('${esc(l._docId)}','${esc(l.name||l.email||'')}')">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+            Delete Forever
+          </button>
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+/* ── Soft-delete: called from table/list/board/view-modal delete buttons ── */
+async function softDeleteLead(docId, displayName) {
+  const label = displayName || docId;
+  if (!confirm(`Move "${label}" to Trash?
+
+You can restore it any time from the Trash sidebar.`)) return;
+  try {
+    const deletedBy = window._currentUserEmail || window._currentUserName || 'Team';
+    await window.dbSoftDeleteLead(docId, deletedBy);
+
+    // Log to activity timeline
+    await window.dbAddActivity(docId, {
+      type: 'note',
+      text: `Lead moved to Trash by ${deletedBy}`,
+      user: document.getElementById('sideUserName')?.textContent || 'Team',
+    }).catch(() => {}); // non-critical
+
+    // Remove from every in-memory cache immediately so UI updates without reload
+    currentLeads  = currentLeads.filter(l => l._docId !== docId);
+    searchResults = searchResults.filter(l => l._docId !== docId);
+    for (const stage of BOARD_STAGES) {
+      if (boardLeads[stage.key])
+        boardLeads[stage.key] = boardLeads[stage.key].filter(l => l._docId !== docId);
+    }
+
+    toast(`"${label}" moved to Trash — restore anytime from Trash sidebar`, 'warn');
+    renderCurrentView();
+    // Non-blocking count refresh
+    refreshCounts();
+  } catch(e) {
+    toast('Delete failed: ' + e.message, 'error');
+    console.error('softDeleteLead', e);
+  }
+}
+
+/* ── Delete from view modal ── */
+async function softDeleteFromModal() {
+  const lead = window._viewingLead;
+  if (!lead) return;
+  closeModal('viewOverlay');
+  await softDeleteLead(lead._docId, lead.name || lead.email || lead.leadId);
+}
+
+/* ── Restore a lead from trash ── */
+async function restoreLead(docId, displayName) {
+  const label = displayName || docId;
+  try {
+    await window.dbRestoreLead(docId);
+    toast(`"${label}" restored successfully`, 'success');
+    trashLeads = trashLeads.filter(l => l._docId !== docId);
+    renderTrash(trashLeads);
+    refreshCounts();
+  } catch(e) {
+    toast('Restore failed: ' + e.message, 'error');
+    console.error('restoreLead', e);
+  }
+}
+
+/* ── Permanently delete one lead from trash ── */
+async function permanentDelete(docId, displayName) {
+  const label = displayName || docId;
+  if (!confirm(`Permanently delete "${label}"?
+
+This CANNOT be undone. The lead and all its activity history will be gone forever.`)) return;
+  try {
+    await window.dbPermanentDeleteLead(docId);
+    toast(`"${label}" permanently deleted`, 'success');
+    trashLeads = trashLeads.filter(l => l._docId !== docId);
+    renderTrash(trashLeads);
+    refreshCounts();
+  } catch(e) {
+    toast('Permanent delete failed: ' + e.message, 'error');
+    console.error('permanentDelete', e);
+  }
+}
+
+/* ── Empty entire trash ── */
+async function emptyTrash() {
+  if (!trashLeads.length) { toast('Trash is already empty', 'warn'); return; }
+  const n = trashLeads.length;
+  if (!confirm(`Permanently delete ALL ${n} lead${n!==1?'s':''} in Trash?
+
+This CANNOT be undone.`)) return;
+  let done = 0, failed = 0;
+  for (const l of trashLeads) {
+    try { await window.dbPermanentDeleteLead(l._docId); done++; }
+    catch(e) { failed++; console.warn('emptyTrash perm-delete failed:', l._docId, e); }
+  }
+  trashLeads = [];
+  renderTrash([]);
+  refreshCounts();
+  if (failed === 0) toast(`${done} lead${done!==1?'s':''} permanently deleted`, 'success');
+  else toast(`${done} deleted · ${failed} failed — check console`, 'warn');
+}
 
 /* ════════════════════════════════════════════════════
    CSV IMPORT
