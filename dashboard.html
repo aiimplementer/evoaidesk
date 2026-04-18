@@ -3439,7 +3439,7 @@ async function triggerN8n(actionId, lead, btnEl) {
 
   
   try {
-     await fetch(url, {method:'POST',mode: 'no-cors',headers:{'Content-Type':'application/json'},
+     await fetch(url, {method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         leadId: lead.leadId, name: lead.name, email: lead.email,
         phone: lead.phone, company: lead.company, status: lead.status,
