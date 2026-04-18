@@ -103,6 +103,9 @@
       assignedToEmail: d.assignedToEmail || '',
       assignedAt:      toISO(d.assignedAt),
       reference_lead_id: d.reference_lead_id || '',
+      deleted:           d.deleted === true,
+      deletedAt:         d.deletedAt?.toDate ? d.deletedAt.toDate().toISOString() : '',
+      deletedBy:         d.deletedBy || '',
     };
   };
 
@@ -142,6 +145,8 @@
       assignedTo:          lead.assignedTo      || 'Unassigned',
       assignedToEmail:     lead.assignedToEmail || '',
       reference_lead_id:   lead.reference_lead_id || '',
+      // ── Soft-delete: preserve the lead's existing deleted state on update; always false on create ──
+      deleted:             lead.deleted === true ? true : false,
       // assignedAt: only write when actually assigning
       ...(lead._setAssignedAt ? { assignedAt: serverTimestamp() } : {}),
     };
@@ -161,7 +166,8 @@
   window.buildLeadsQuery = (filters = {}, pageSize = PAGE_SIZE_DEFAULT, afterSnap = null, beforeSnap = null) => {
     const ref = collection(db, 'leads');
     const tenantId = window._currentTenantId || '';
-    const constraints = [ orderBy('createdAt', 'desc'), where('tenant_id', '==', tenantId) ];
+    const hasFilters1 = filters.status || filters.service || filters.industry || filters.assignedTo;
+    const constraints = [ orderBy('createdAt', 'desc'), where('tenant_id', '==', tenantId), hasFilters1 ? where('deleted', '==', false) : where('deleted', '!=', true) ];
     if (filters.status)   constraints.push(where('status',      '==', filters.status));
     if (filters.service)  constraints.push(where('service',     '==', filters.service));
     if (filters.industry) constraints.push(where('industry',    '==', filters.industry));
@@ -181,7 +187,11 @@
   window.dbCountLeads = async (filters = {}) => {
     const ref = collection(db, 'leads');
     const tenantId = window._currentTenantId || '';
-    const constraints = [ where('tenant_id', '==', tenantId) ];
+    // Use != true (catches missing field) when no extra field filters exist — no composite index needed.
+    // With extra equality filters, fall back to == false to avoid composite index requirement.
+    const hasExtraFilters = filters.status || filters.service || filters.industry || filters.assignedTo;
+    const deletedFilter = hasExtraFilters ? where('deleted', '==', false) : where('deleted', '!=', true);
+    const constraints = [ where('tenant_id', '==', tenantId), deletedFilter ];
     if (filters.status)   constraints.push(where('status',      '==', filters.status));
     if (filters.service)  constraints.push(where('service',     '==', filters.service));
     if (filters.industry) constraints.push(where('industry',    '==', filters.industry));
@@ -194,11 +204,13 @@
   window.dbCountAllStatuses = async () => {
     const ref = collection(db, 'leads');
     const tenantId = window._currentTenantId || '';
-    const tenantQuery = query(ref, where('tenant_id', '==', tenantId));
+    // Total count: no extra field filter, safe to use != true (includes docs without the deleted field)
+    const tenantQuery = query(ref, where('tenant_id', '==', tenantId), where('deleted', '!=', true));
     const statuses = ['New','Contacted','Discovery Call','Qualified','Proposal Sent','Negotiation','Won','Lost'];
     const [totalSnap, ...statusSnaps] = await Promise.all([
       getCountFromServer(tenantQuery),
-      ...statuses.map(s => getCountFromServer(query(ref, where('tenant_id','==',tenantId), where('status','==',s))))
+      // Per-status: combined with status filter — use == false to avoid composite index requirement
+      ...statuses.map(s => getCountFromServer(query(ref, where('tenant_id','==',tenantId), where('deleted','==',false), where('status','==',s))))
     ]);
     const result = { ALL: totalSnap.data().count };
     statuses.forEach((s,i) => { result[s] = statusSnaps[i].data().count; });
@@ -210,7 +222,8 @@
       if (lastPage) {
         const ref = collection(db, 'leads');
         const tenantId = window._currentTenantId || '';
-        const constraints = [ orderBy('createdAt', 'desc'), where('tenant_id', '==', tenantId) ];
+        const hasFilters2 = filters.status || filters.service || filters.industry || filters.assignedTo;
+        const constraints = [ orderBy('createdAt', 'desc'), where('tenant_id', '==', tenantId), hasFilters2 ? where('deleted', '==', false) : where('deleted', '!=', true) ];
         if (filters.status)   constraints.push(where('status',      '==', filters.status));
         if (filters.service)  constraints.push(where('service',     '==', filters.service));
         if (filters.industry) constraints.push(where('industry',    '==', filters.industry));
@@ -235,6 +248,7 @@
     const q = query(
       collection(db, 'leads'),
       where('tenant_id', '==', tenantId),
+      where('deleted', '==', false),  // combined with status filter — use == false to avoid composite index
       where('status', '==', status),
       orderBy('createdAt', 'desc'),
       limit(200)
@@ -246,7 +260,8 @@
   window.dbSearchLeads = async (searchTerm, filters = {}, maxDocs = 500) => {
     const ref = collection(db, 'leads');
     const tenantId = window._currentTenantId || '';
-    const constraints = [ orderBy('createdAt', 'desc'), where('tenant_id', '==', tenantId), limit(maxDocs) ];
+    // dbSearchLeads fetches a large batch client-side — always include extra filters so use == false
+    const constraints = [ orderBy('createdAt', 'desc'), where('tenant_id', '==', tenantId), where('deleted', '==', false), limit(maxDocs) ];
     if (filters.status)   constraints.push(where('status',      '==', filters.status));
     if (filters.service)  constraints.push(where('service',     '==', filters.service));
     if (filters.industry) constraints.push(where('industry',    '==', filters.industry));
@@ -283,13 +298,62 @@
 
   window.dbLoadAll = async () => {
     const tenantId = window._currentTenantId || '';
-    const snap = await getDocs(query(collection(db, 'leads'), where('tenant_id', '==', tenantId), orderBy('createdAt', 'desc')));
+    const snap = await getDocs(query(collection(db, 'leads'), where('tenant_id', '==', tenantId), where('deleted', '!=', true), orderBy('createdAt', 'desc')));
     return snap.docs.map(d => window.docToLead(d));
   };
 
   window.dbGetLead = async (docId) => {
     const snap = await getDoc(doc(db, 'leads', docId));
     return snap.exists() ? window.docToLead(snap) : null;
+  };
+
+  /* ─── Soft Delete / Trash ─── */
+  window.dbSoftDeleteLead = async (docId, deletedBy = '') => {
+    await updateDoc(doc(db, 'leads', docId), {
+      deleted:             true,
+      deletedAt:           serverTimestamp(),
+      deletedBy:           deletedBy,
+      lastUpdateTimestamp: serverTimestamp(),
+    });
+  };
+
+  window.dbRestoreLead = async (docId) => {
+    await updateDoc(doc(db, 'leads', docId), {
+      deleted:             false,
+      deletedAt:           null,
+      deletedBy:           '',
+      lastUpdateTimestamp: serverTimestamp(),
+    });
+  };
+
+  window.dbPermanentDeleteLead = async (docId) => {
+    await deleteDoc(doc(db, 'leads', docId));
+  };
+
+  window.dbLoadTrash = async () => {
+    const tenantId = window._currentTenantId || '';
+    const snap = await getDocs(query(
+      collection(db, 'leads'),
+      where('tenant_id', '==', tenantId),
+      where('deleted',   '==', true),
+      orderBy('deletedAt', 'desc'),
+      limit(300)
+    ));
+    return snap.docs.map(d => {
+      const lead = window.docToLead(d);
+      // deletedAt / deletedBy already mapped in docToLead
+      return lead;
+    });
+  };
+
+  window.dbCountTrash = async () => {
+    const tenantId = window._currentTenantId || '';
+    const snap = await getCountFromServer(query(
+      collection(db, 'leads'),
+      where('tenant_id', '==', tenantId),
+      where('deleted',   '==', true)
+    ));
+    return snap.data().count;
   };
 
   /* ─── Activities ─── */
@@ -341,6 +405,13 @@
 		
 		if (userDocSnap.exists()) {
 		tenantId = userDocSnap.data().tenant_id || null;
+		// Show role badge if present
+		const role = userDocSnap.data().role || '';
+		if (role) {
+		  window._currentUserRole = role;
+		  const roleEl = document.getElementById('sideUserRole');
+		  if (roleEl) { roleEl.textContent = role; roleEl.style.display = 'inline-block'; }
+		}
 		}
 	  /**
       const usersSnap = await getDocs(query(
@@ -515,14 +586,14 @@
     height: 100%; overflow: hidden;
     position: relative;
   }
-  .aside-scroll { flex: 1; overflow-y: auto; padding: 24px 0 8px; }
+  .aside-scroll { flex: 1; overflow-y: auto; padding: 10px 0 8px; }
   .aside-scroll::-webkit-scrollbar { width: 4px; }
   .aside-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
   .aside-section { padding: 0 16px 4px; }
   .aside-label {
     font-size: .62rem; font-weight: 600; letter-spacing: .12em;
-    color: var(--muted); text-transform: uppercase; padding: 14px 0 6px;
+    color: var(--muted); text-transform: uppercase; padding: 6px 0 6px;
   }
   .aside-item {
     display: flex; align-items: center; gap: 9px;
@@ -559,6 +630,12 @@
   .aside-user-email {
     font-size: .65rem; color: var(--muted);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .aside-user-role {
+    display: inline-block; margin-top: 3px;
+    font-size: .58rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--accent); background: rgba(0,229,160,.1); border: 1px solid rgba(0,229,160,.2);
+    padding: 1px 6px; border-radius: 4px; font-family: var(--mono);
   }
 
   /* ── MAIN ── */
@@ -673,6 +750,33 @@
     display: flex; align-items: center; justify-content: center; transition: all .14s;
   }
   .icon-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(0,229,160,.06); }
+  .icon-btn-danger:hover { border-color: var(--danger) !important; color: var(--danger) !important; background: rgba(255,77,109,.06) !important; }
+
+  /* ── TRASH ── */
+  .trash-row td { opacity: .82; }
+  .trash-row:hover td { opacity: 1; }
+  .restore-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: rgba(0,229,160,.08); border: 1px solid rgba(0,229,160,.25);
+    color: var(--accent); border-radius: 5px; padding: 4px 10px;
+    font-size: .7rem; font-weight: 600; cursor: pointer; font-family: var(--font);
+    transition: all .15s; white-space: nowrap;
+  }
+  .restore-btn:hover { background: rgba(0,229,160,.18); border-color: var(--accent); }
+  .perm-del-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: rgba(255,77,109,.08); border: 1px solid rgba(255,77,109,.25);
+    color: var(--danger); border-radius: 5px; padding: 4px 10px;
+    font-size: .7rem; font-weight: 600; cursor: pointer; font-family: var(--font);
+    transition: all .15s; white-space: nowrap;
+  }
+  .perm-del-btn:hover { background: rgba(255,77,109,.18); border-color: var(--danger); }
+  .trash-banner {
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(255,77,109,.07); border: 1px solid rgba(255,77,109,.22);
+    border-radius: 8px; padding: 9px 14px; margin-bottom: 14px;
+    font-size: .76rem; color: var(--danger);
+  }
 
   /* ── EXPORT DROPDOWN ── */
   .export-dropdown-wrap { position: relative; }
@@ -1265,6 +1369,7 @@
     border-radius: 8px; padding: 14px 16px; font-size: .82rem; color: var(--accent);
   }
 </style>
+<script src="config.js"></script>
 </head>
 <body>
 
@@ -1375,6 +1480,12 @@
           Lost <span class="aside-count" id="cnt-lost">—</span>
         </div>
 
+        <!-- TRASH FILTER -->
+        <div class="aside-item" id="trashFilterItem" onclick="toggleTrashMode(this)" title="View deleted leads">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+          Trash <span class="aside-count-danger" id="cnt-trash">—</span>
+        </div>
+
         <!-- OVERDUE FILTER -->
         <div class="aside-item" id="overdueFilterItem" onclick="toggleOverdueFilter(this)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -1406,6 +1517,7 @@
       <div class="aside-user-text">
         <div class="aside-user-name"  id="sideUserName">—</div>
         <div class="aside-user-email" id="sideUserEmail">—</div>
+        <div class="aside-user-role"  id="sideUserRole" style="display:none;"></div>
       </div>
     </div>
   </aside>
@@ -1710,6 +1822,38 @@
         </div>
       </div>
     </div>
+    <!-- TRASH VIEW -->
+    <div id="trashView" style="display:none;">
+      <div class="trash-banner">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+        <span>Deleted leads — <strong style="color:var(--text);">Restore</strong> recovers a lead. <strong style="color:var(--danger);">Delete Forever</strong> is permanent and cannot be undone.</span>
+        <button onclick="emptyTrash()" style="margin-left:auto;background:rgba(255,77,109,.12);border:1px solid rgba(255,77,109,.3);color:var(--danger);border-radius:5px;padding:5px 14px;font-size:.72rem;cursor:pointer;font-family:var(--font);font-weight:600;display:flex;align-items:center;gap:6px;transition:all .15s;" onmouseover="this.style.background='rgba(255,77,109,.22)'" onmouseout="this.style.background='rgba(255,77,109,.12)'">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          Empty Trash
+        </button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Contact</th>
+              <th>Company</th>
+              <th>Status at Deletion</th>
+              <th>Deleted By</th>
+              <th>Deleted At</th>
+              <th style="min-width:200px;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="trashBody">
+            <tr><td colspan="6"><div class="empty-state">
+              <div class="spinner" style="margin:0 auto 12px;"></div>
+              <p>Loading trash…</p>
+            </div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
   </main>
 </div><!-- end .shell -->
 
@@ -1920,6 +2064,10 @@
     <div class="modal-foot" style="justify-content:space-between;">
       <div style="display:flex;align-items:center;gap:8px;" id="viewNextAction"></div>
       <div style="display:flex;gap:8px;">
+        <button class="pill-btn outline" style="display:flex;align-items:center;gap:6px;font-size:.76rem;border-color:rgba(255,77,109,.35);color:var(--danger);" onclick="softDeleteFromModal()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          Move to Trash
+        </button>
         <button class="pill-btn outline" onclick="closeModal('viewOverlay')">Close</button>
       </div>
     </div>
@@ -2283,6 +2431,7 @@ window.initApp = async function() {
 };
 
 window.refreshAll = async function() {
+  if (isTrashMode) { await loadTrashView(); await refreshCounts(); return; }
   resetPagination();
   await Promise.all([loadPage('first'), refreshCounts()]);
 };
@@ -2302,6 +2451,12 @@ async function refreshCounts() {
     document.getElementById('cnt-negotiation').textContent = counts['Negotiation']    || 0;
     document.getElementById('cnt-won').textContent         = counts['Won']            || 0;
     document.getElementById('cnt-lost').textContent        = counts['Lost']           || 0;
+
+    // Refresh trash count (non-blocking, best-effort)
+    window.dbCountTrash().then(n => {
+      const el = document.getElementById('cnt-trash');
+      if (el) el.textContent = n || 0;
+    }).catch(() => {});
 
     document.getElementById('s-total').textContent = counts['ALL']       || 0;
     document.getElementById('s-new').textContent   = counts['New']       || 0;
@@ -2349,7 +2504,7 @@ async function refreshCounts() {
    CORE PAGE LOADER
 ════════════════════════════════════════════════════ */
 async function loadPage(direction = 'first') {
-  if (isSearchMode || isOverdueMode || isMyLeadsMode) return;
+  if (isSearchMode || isOverdueMode || isMyLeadsMode || isTrashMode) return;
   setLoadingState(true);
   try {
     let afterSnap = null, beforeSnap = null, useLastPage = false;
@@ -2394,13 +2549,13 @@ function resetPagination() {
   totalCount = 0;
 }
 
-async function goNextPage()  { if (!isSearchMode && !isOverdueMode && !isMyLeadsMode && pageNumber < Math.ceil(totalCount/PAGE_SIZE)) await loadPage('next'); }
-async function goPrevPage()  { if (!isSearchMode && !isOverdueMode && !isMyLeadsMode && pageNumber > 1) await loadPage('prev'); }
-async function goFirstPage() { if (!isSearchMode && !isOverdueMode && !isMyLeadsMode && pageNumber > 1) await loadPage('first'); }
-async function goLastPage()  { if (!isSearchMode && !isOverdueMode && !isMyLeadsMode && pageNumber < Math.ceil(totalCount/PAGE_SIZE)) await loadPage('last'); }
+async function goNextPage()  { if (!isSearchMode && !isOverdueMode && !isMyLeadsMode && !isTrashMode && pageNumber < Math.ceil(totalCount/PAGE_SIZE)) await loadPage('next'); }
+async function goPrevPage()  { if (!isSearchMode && !isOverdueMode && !isMyLeadsMode && !isTrashMode && pageNumber > 1) await loadPage('prev'); }
+async function goFirstPage() { if (!isSearchMode && !isOverdueMode && !isMyLeadsMode && !isTrashMode && pageNumber > 1) await loadPage('first'); }
+async function goLastPage()  { if (!isSearchMode && !isOverdueMode && !isMyLeadsMode && !isTrashMode && pageNumber < Math.ceil(totalCount/PAGE_SIZE)) await loadPage('last'); }
 
 async function goJumpPage() {
-  if (isSearchMode || isOverdueMode || isMyLeadsMode) return;
+  if (isSearchMode || isOverdueMode || isMyLeadsMode || isTrashMode) return;
   const tableInput = document.getElementById('jumpInput');
   const listInput  = document.getElementById('listJumpInput');
   const raw = (tableInput && tableInput.value) || (listInput && listInput.value) || '';
@@ -2463,7 +2618,8 @@ function updatePaginationControls() {
 ════════════════════════════════════════════════════ */
 function toggleOverdueFilter(el) {
   if (isOverdueMode) { clearOverdueFilter(); return; }
-  if (isMyLeadsMode) clearMyLeadsFilter();
+  clearTrashMode(true);
+  if (isMyLeadsMode) clearMyLeadsFilter(true);
   // Clear status filter so overdue searches ALL statuses
   activeFilters.status = '';
   document.querySelectorAll('.aside-item').forEach(i => { i.classList.remove('active','active-danger'); });
@@ -2492,7 +2648,7 @@ async function runOverdueFilter() {
   finally { setLoadingState(false); }
 }
 
-function clearOverdueFilter() {
+function clearOverdueFilter(skipReload = false) {
   isOverdueMode = false; searchResults = [];
   // Reset status filter so going back to All Leads is clean
   activeFilters.status = '';
@@ -2505,7 +2661,7 @@ function clearOverdueFilter() {
   if (allLeadsItem) allLeadsItem.classList.add('active');
   resetPagination();
   updatePaginationControls();
-  loadPage('first');
+  if (!skipReload) loadPage('first');
 }
 
 /* ════════════════════════════════════════════════════
@@ -2513,7 +2669,8 @@ function clearOverdueFilter() {
 ════════════════════════════════════════════════════ */
 function toggleMyLeadsFilter(el) {
   if (isMyLeadsMode) { clearMyLeadsFilter(); return; }
-  if (isOverdueMode) clearOverdueFilter();
+  clearTrashMode(true);
+  if (isOverdueMode) clearOverdueFilter(true);
   document.querySelectorAll('.aside-item').forEach(i => i.classList.remove('active','active-danger'));
   el.classList.add('active');
   isMyLeadsMode = true;
@@ -2539,20 +2696,21 @@ async function runMyLeadsFilter() {
   finally { setLoadingState(false); }
 }
 
-function clearMyLeadsFilter() {
+function clearMyLeadsFilter(skipReload = false) {
   isMyLeadsMode = false; searchResults = [];
   document.getElementById('myLeadsFilterItem').classList.remove('active');
   document.querySelector('.aside-item')?.classList.add('active');
   updatePaginationControls();
-  loadPage('first');
+  if (!skipReload) loadPage('first');
 }
 
 /* ════════════════════════════════════════════════════
    FILTERS — sidebar status + dropdowns
 ════════════════════════════════════════════════════ */
 function setStatusFilter(status, el) {
-  if (isOverdueMode) clearOverdueFilter();
-  if (isMyLeadsMode) clearMyLeadsFilter();
+  clearTrashMode(true);
+  if (isOverdueMode) clearOverdueFilter(true);
+  if (isMyLeadsMode) clearMyLeadsFilter(true);
   activeFilters.status = status;
   document.querySelectorAll('.aside-item').forEach(i => i.classList.remove('active','active-danger'));
   if (el) el.classList.add('active');
@@ -2562,6 +2720,7 @@ function setStatusFilter(status, el) {
 }
 
 function onFilterChange() {
+  clearTrashMode(true);
   activeFilters.service  = document.getElementById('serviceFilter').value;
   activeFilters.industry = document.getElementById('industryFilter').value;
   clearSearch();
@@ -2577,8 +2736,9 @@ function onSearchInput(q) {
   searchTimer = setTimeout(() => {
     const term = q.trim();
     if (!term) { clearSearch(); return; }
-    if (isOverdueMode) clearOverdueFilter();
-    if (isMyLeadsMode) clearMyLeadsFilter();
+    if (isOverdueMode) clearOverdueFilter(true);
+    if (isMyLeadsMode) clearMyLeadsFilter(true);
+    if (isTrashMode)   clearTrashMode(true);
     runSearch(term);
   }, 380);
 }
@@ -2610,6 +2770,7 @@ function clearSearch() {
    VIEW SWITCHING
 ════════════════════════════════════════════════════ */
 function setView(view, btn) {
+  clearTrashMode(true);
   currentView = view;
   document.querySelectorAll('#viewToggle button').forEach(b => { b.style.background='transparent'; b.style.color='var(--muted)'; });
   btn.style.background = 'var(--surface)'; btn.style.color = 'var(--accent)';
@@ -2618,6 +2779,7 @@ function setView(view, btn) {
 }
 
 function renderCurrentView() {
+  document.getElementById('trashView').style.display = 'none';
   document.getElementById('tableView').style.display = currentView === 'table' ? 'block' : 'none';
   document.getElementById('boardView').style.display = currentView === 'board' ? 'block' : 'none';
   document.getElementById('listView').style.display  = currentView === 'list'  ? 'block' : 'none';
@@ -2675,6 +2837,9 @@ function renderTable(leads) {
           <button class="icon-btn" title="Edit" onclick="editLeadById('${esc(l.leadId)}','${esc(l._docId)}')">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
+          <button class="icon-btn icon-btn-danger" title="Move to Trash" onclick="softDeleteLead('${esc(l._docId)}','${esc(l.name||l.email||'')}')">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+          </button>
         </div>
       </td>
     </tr>`;
@@ -2685,6 +2850,7 @@ function renderTable(leads) {
    BOARD VIEW
 ════════════════════════════════════════════════════ */
 async function loadBoardView() {
+  document.getElementById('trashView').style.display  = 'none';
   document.getElementById('tableView').style.display = 'none';
   document.getElementById('listView').style.display  = 'none';
   document.getElementById('boardView').style.display = 'block';
@@ -2856,6 +3022,9 @@ function renderList(leads) {
         </button>
         <button class="icon-btn" title="Edit"  onclick="editLeadById('${esc(l.leadId)}','${esc(l._docId)}')">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button class="icon-btn icon-btn-danger" title="Move to Trash" onclick="softDeleteLead('${esc(l._docId)}','${esc(l.name||l.email||'')}')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
         </button>
       </div>
     </div>`;
@@ -3037,14 +3206,14 @@ function assignToMe() {
 let _viewingDocId = null;
 
 const N8N_WEBHOOKS = {
-  send_intro_email:   'https://unsparse-sherman-nonfallaciously.ngrok-free.dev/webhook/evoaidesk_trigger_email',
-  send_proposal:      'https://unsparse-sherman-nonfallaciously.ngrok-free.dev/webhook/evoaidesk_trigger_email',
+  send_intro_email:    API.n8n_workflow,
+  send_proposal:       API.n8n_workflow,
   enrich_linkedin:    'https://your-n8n-instance/webhook/enrich-linkedin',
   add_to_crm:         'https://your-n8n-instance/webhook/add-to-crm',
-  schedule_followup:  'https://unsparse-sherman-nonfallaciously.ngrok-free.dev/webhook/evoaidesk_trigger_email',
-  send_whatsapp:      'https://unsparse-sherman-nonfallaciously.ngrok-free.dev/webhook/evoaidesk_trigger_email',
+  schedule_followup:   API.n8n_workflow,
+  send_whatsapp:       API.n8n_workflow,
   notify_slack:       'https://your-n8n-instance/webhook/notify-slack',
-  send_nurture:       'https://unsparse-sherman-nonfallaciously.ngrok-free.dev/webhook/evoaidesk_trigger_email',
+  send_nurture:        API.n8n_workflow,
 };
 const AUTO_ACTIONS = [
   {id:'send_intro_email', label:'Send Intro Email',    icon:'📧', badge:'Email'},
@@ -3075,6 +3244,11 @@ async function viewLead(leadId, docId, preloadedLead = null) {
   document.getElementById('viewLeadId').textContent   = lead.leadId;
   document.getElementById('viewLeadName').textContent = lead.name || 'Lead Details';
   document.getElementById('viewEditBtn').onclick = () => editLeadById(lead.leadId, _viewingDocId);
+  // Hide destructive/edit actions for already-deleted leads (opened from Trash)
+  const isDeleted = lead.deleted === true;
+  document.getElementById('viewEditBtn').style.display = isDeleted ? 'none' : '';
+  const trashBtn = document.querySelector('#viewOverlay .modal-foot button[onclick="softDeleteFromModal()"]');
+  if (trashBtn) trashBtn.style.display = isDeleted ? 'none' : '';
 
   const score = computeScore(lead);
   document.getElementById('viewScoreBadge').innerHTML   = scoreBadge(score);
@@ -3385,7 +3559,9 @@ function downloadCSV(csv, filename) {
 
 /* Export current view / page */
 function exportCSV() {
-  const leads = (isSearchMode || isOverdueMode || isMyLeadsMode) ? searchResults : currentLeads;
+  const leads = isTrashMode ? trashLeads
+              : (isSearchMode || isOverdueMode || isMyLeadsMode) ? searchResults
+              : currentLeads;
   if (!leads.length) { toast('No leads on this page to export', 'warn'); return; }
   downloadCSV(buildCSV(leads), 'leads-export.csv');
   toast(`Exported ${leads.length} leads as CSV`, 'success');
@@ -3687,7 +3863,7 @@ function statusBadge(s) {
   return `<span class="badge badge-${map[s]||'new'}">${esc(s||'New')}</span>`;
 }
 function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 function switchViewTab(tab, btnEl) {
   ['details','timeline','automations','report'].forEach(t => { document.getElementById('vtab-'+t).style.display = t===tab ? '' : 'none'; });
@@ -3740,6 +3916,203 @@ function toggleSidebar() {
     shell?.classList.add('sidebar-collapsed');
   }
 })();
+
+/* ════════════════════════════════════════════════════
+   SOFT DELETE & TRASH
+════════════════════════════════════════════════════ */
+let isTrashMode = false;
+let trashLeads  = [];
+
+/* Toggle trash mode from sidebar */
+function toggleTrashMode(el) {
+  if (isTrashMode) { clearTrashMode(); return; }
+  // Clear competing modes — pass true to suppress their loadPage, avoiding a race with loadTrashView
+  if (isOverdueMode)  clearOverdueFilter(true);
+  if (isMyLeadsMode)  clearMyLeadsFilter(true);
+  isSearchMode = false;
+  document.getElementById('searchInput').value = '';
+  document.getElementById('searchModeBanner').classList.remove('show');
+  document.getElementById('overdueModeBanner').classList.remove('show');
+
+  document.querySelectorAll('.aside-item').forEach(i => i.classList.remove('active','active-danger'));
+  el.classList.add('active-danger');
+  isTrashMode = true;
+
+  // Hide normal views; show trash
+  ['tableView','boardView','listView'].forEach(id => document.getElementById(id).style.display = 'none');
+  document.getElementById('trashView').style.display = 'block';
+  document.getElementById('pagination').style.display     = 'none';
+  document.getElementById('listPagination').style.display = 'none';
+
+  loadTrashView();
+}
+
+function clearTrashMode(skipReload = false) {
+  isTrashMode = false; trashLeads = [];
+  document.getElementById('trashView').style.display = 'none';
+  document.getElementById('trashFilterItem').classList.remove('active-danger');
+  // Restore All Leads as active
+  const allItem = document.querySelector('.aside-item[onclick*="setStatusFilter(\'\',"]') || document.querySelector('.aside-item');
+  document.querySelectorAll('.aside-item').forEach(i => i.classList.remove('active','active-danger'));
+  if (allItem) allItem.classList.add('active');
+  activeFilters.status = '';
+  resetPagination();
+  if (!skipReload) loadPage('first');
+}
+
+async function loadTrashView() {
+  document.getElementById('trashBody').innerHTML =
+    '<tr><td colspan="6"><div class="empty-state"><div class="spinner" style="margin:0 auto 12px;"></div><p>Loading…</p></div></td></tr>';
+  try {
+    trashLeads = await window.dbLoadTrash();
+    renderTrash(trashLeads);
+  } catch(e) {
+    document.getElementById('trashBody').innerHTML =
+      `<tr><td colspan="6"><div class="empty-state"><p style="color:var(--danger);">Failed to load trash: ${esc(e.message)}</p></div></td></tr>`;
+    console.error('loadTrashView', e);
+  }
+}
+
+function renderTrash(leads) {
+  const tbody = document.getElementById('trashBody');
+  if (!leads || !leads.length) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">
+      <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.25;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+      <p>Trash is empty.</p>
+    </div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = leads.map(l => `
+    <tr class="trash-row">
+      <td>
+        <div class="lead-name">${esc(l.name||'—')}</div>
+        <div class="lead-sub">${esc(l.email||'')}</div>
+        <div class="lead-id">${esc(l.leadId||'')}</div>
+      </td>
+      <td>
+        <div style="font-weight:600;font-size:.81rem;">${esc(l.company||'—')}</div>
+        ${l.jobtitle ? `<div class="lead-sub">${esc(l.jobtitle)}</div>` : ''}
+      </td>
+      <td>${statusBadge(l.status)}</td>
+      <td style="font-size:.75rem;color:var(--muted);">${esc(l.deletedBy||'—')}</td>
+      <td style="font-size:.72rem;font-family:var(--mono);color:var(--muted);">${l.deletedAt ? esc(fmtDate(l.deletedAt)) : '—'}</td>
+      <td>
+        <div class="row-actions">
+          <button class="restore-btn" onclick="restoreLead('${esc(l._docId)}','${esc(l.name||l.email||'')}')">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4"/></svg>
+            Restore
+          </button>
+          <button class="perm-del-btn" onclick="permanentDelete('${esc(l._docId)}','${esc(l.name||l.email||'')}')">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+            Delete Forever
+          </button>
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+/* ── Soft-delete: called from table/list/board/view-modal delete buttons ── */
+async function softDeleteLead(docId, displayName) {
+  const label = displayName || docId;
+  if (!confirm(`Move "${label}" to Trash?
+
+You can restore it any time from the Trash sidebar.`)) return;
+  try {
+    const deletedBy = window._currentUserEmail || window._currentUserName || 'Team';
+    await window.dbSoftDeleteLead(docId, deletedBy);
+
+    // Log to activity timeline
+    await window.dbAddActivity(docId, {
+      type: 'note',
+      text: `Lead moved to Trash by ${deletedBy}`,
+      user: document.getElementById('sideUserName')?.textContent || 'Team',
+    }).catch(() => {}); // non-critical
+
+    // Remove from every in-memory cache immediately so UI updates without reload
+    currentLeads  = currentLeads.filter(l => l._docId !== docId);
+    searchResults = searchResults.filter(l => l._docId !== docId);
+    for (const stage of BOARD_STAGES) {
+      if (boardLeads[stage.key])
+        boardLeads[stage.key] = boardLeads[stage.key].filter(l => l._docId !== docId);
+    }
+
+    toast(`"${label}" moved to Trash — restore anytime from Trash sidebar`, 'warn');
+    renderCurrentView();
+    // Non-blocking count refresh
+    refreshCounts();
+  } catch(e) {
+    toast('Delete failed: ' + e.message, 'error');
+    console.error('softDeleteLead', e);
+  }
+}
+
+/* ── Delete from view modal ── */
+async function softDeleteFromModal() {
+  const lead = window._viewingLead;
+  if (!lead) return;
+  closeModal('viewOverlay');
+  await softDeleteLead(lead._docId, lead.name || lead.email || lead.leadId);
+}
+
+/* ── Restore a lead from trash ── */
+async function restoreLead(docId, displayName) {
+  const label = displayName || docId;
+  try {
+    await window.dbRestoreLead(docId);
+    toast(`"${label}" restored successfully`, 'success');
+    trashLeads = trashLeads.filter(l => l._docId !== docId);
+    renderTrash(trashLeads);
+    refreshCounts();
+  } catch(e) {
+    toast('Restore failed: ' + e.message, 'error');
+    console.error('restoreLead', e);
+  }
+}
+
+/* ── Permanently delete one lead from trash ── */
+async function permanentDelete(docId, displayName) {
+  const label = displayName || docId;
+  if (!confirm(`Permanently delete "${label}"?
+
+This CANNOT be undone. The lead and all its activity history will be gone forever.`)) return;
+  try {
+    await window.dbPermanentDeleteLead(docId);
+    toast(`"${label}" permanently deleted`, 'success');
+    trashLeads = trashLeads.filter(l => l._docId !== docId);
+    renderTrash(trashLeads);
+    refreshCounts();
+  } catch(e) {
+    toast('Permanent delete failed: ' + e.message, 'error');
+    console.error('permanentDelete', e);
+  }
+}
+
+/* ── Empty entire trash ── */
+async function emptyTrash() {
+  if (!trashLeads.length) { toast('Trash is already empty', 'warn'); return; }
+  const n = trashLeads.length;
+  if (!confirm(`Permanently delete ALL ${n} lead${n!==1?'s':''} in Trash?
+
+This CANNOT be undone.`)) return;
+  let done = 0, failed = 0;
+  const failedIds = new Set();
+  const firstError = { msg: null };
+  for (const l of trashLeads) {
+    try { await window.dbPermanentDeleteLead(l._docId); done++; }
+    catch(e) {
+      failed++;
+      failedIds.add(l._docId);
+      if (!firstError.msg) firstError.msg = (e && e.message) ? e.message : String(e);
+      console.error('emptyTrash perm-delete failed:', l._docId, e);
+    }
+  }
+  // Only wipe leads that were actually deleted — keep failed ones visible in Trash
+  trashLeads = failed > 0 ? trashLeads.filter(l => failedIds.has(l._docId)) : [];
+  renderTrash(trashLeads);
+  refreshCounts();
+  if (failed === 0) toast(`${done} lead${done!==1?'s':''} permanently deleted`, 'success');
+  else toast(`${done} deleted · ${failed} failed: ${firstError.msg || 'unknown error'} — failed leads still shown in Trash`, 'error');
+}
 
 /* ════════════════════════════════════════════════════
    CSV IMPORT
