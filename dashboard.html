@@ -2918,8 +2918,18 @@ function setView(view, btn) {
   currentView = view;
   document.querySelectorAll('#viewToggle button').forEach(b => { b.style.background='transparent'; b.style.color='var(--muted)'; });
   btn.style.background = 'var(--surface)'; btn.style.color = 'var(--accent)';
-  if (view === 'board') loadBoardView();
-  else renderCurrentView();
+  if (view === 'board') {
+    loadBoardView();
+    // Hide pagination while in board view
+    document.getElementById('pagination').style.display     = 'none';
+    document.getElementById('listPagination').style.display = 'none';
+  } else {
+    renderCurrentView();
+    // Restore pagination controls when switching back to table or list
+    if (!isSearchMode && !isOverdueMode && !isMyLeadsMode && !isTrashMode) {
+      updatePaginationControls();
+    }
+  }
 }
 
 function renderCurrentView() {
@@ -2929,6 +2939,10 @@ function renderCurrentView() {
   document.getElementById('listView').style.display  = currentView === 'list'  ? 'block' : 'none';
   if (currentView === 'table') renderTable(currentLeads);
   else if (currentView === 'list') renderList(currentLeads);
+  // Keep pagination UI in sync after every render (skip board / special modes)
+  if (!isSearchMode && !isOverdueMode && !isMyLeadsMode && !isTrashMode && currentView !== 'board') {
+    updatePaginationControls();
+  }
 }
 
 /* ════════════════════════════════════════════════════
