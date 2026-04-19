@@ -327,7 +327,14 @@
   };
 
   window.dbPermanentDeleteLead = async (docId) => {
-    await deleteDoc(doc(db, 'leads', docId));
+   // 1. Delete all activities in the subcollection
+   const activitiesRef = collection(db, 'leads', docId, 'activities');
+   const activitiesSnap = await getDocs(activitiesRef);
+   const deletions = activitiesSnap.docs.map(d => deleteDoc(d.ref));
+   await Promise.all(deletions);
+
+   // 2. Then delete the lead document itself
+   await deleteDoc(doc(db, 'leads', docId));
   };
 
   window.dbLoadTrash = async () => {
