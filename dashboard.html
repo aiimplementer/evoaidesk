@@ -3206,14 +3206,14 @@ function assignToMe() {
 let _viewingDocId = null;
 
 const N8N_WEBHOOKS = {
-  send_intro_email:    'https://n8n.evoaiglobal.ai/webhook/evoaidesk_trigger_email',
-  send_proposal:       'https://n8n.evoaiglobal.ai/webhook/evoaidesk_trigger_email',
+  send_intro_email:    n8n_workflow,
+  send_proposal:       n8n_workflow,
   enrich_linkedin:     'https://your-n8n-instance/webhook/enrich-linkedin',
   add_to_crm:          'https://your-n8n-instance/webhook/add-to-crm',
-  schedule_followup:   'https://n8n.evoaiglobal.ai/webhook/evoaidesk_trigger_email',
-  send_whatsapp:       'https://n8n.evoaiglobal.ai/webhook/evoaidesk_trigger_email',
+  schedule_followup:   n8n_workflow,
+  send_whatsapp:       n8n_workflow,
   notify_slack:        'https://your-n8n-instance/webhook/notify-slack',
-  send_nurture:         'https://n8n.evoaiglobal.ai/webhook/evoaidesk_trigger_email'
+  send_nurture:         n8n_workflow
 };
 const AUTO_ACTIONS = [
   {id:'send_intro_email', label:'Send Intro Email',    icon:'📧', badge:'Email'},
@@ -3465,8 +3465,8 @@ async function triggerN8n(actionId, lead, btnEl) {
    REPORTS — n8n webhooks returning HTML
 ════════════════════════════════════════════════════ */
 const N8N_REPORT_WEBHOOKS = {
-  full_pipeline:    'https://unsparse-sherman-nonfallaciously.ngrok-free.dev/webhook/evoaidesk_activities',
-  stage_pipeline:   'https://unsparse-sherman-nonfallaciously.ngrok-free.dev/webhook/evoaidesk_activities',
+  full_pipeline:    API.n8n_activity_pipeline,
+  stage_pipeline:   API.n8n_activity_pipeline
 };
 
 async function fetchReport(reportType, btnEl) {
