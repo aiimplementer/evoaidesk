@@ -2732,9 +2732,13 @@ function updatePaginationControls() {
   const counterT = `Page ${pageNumber} of ${maxPage}`;
   const showPag  = totalCount > PAGE_SIZE || pageNumber > 1;
 
+  // Only show the pagination bar that belongs to the active view
+  const isTable = currentView === 'table';
+  const isList  = currentView === 'list';
+
   const pag = document.getElementById('pagination');
-  pag.style.display = showPag ? 'flex' : 'none';
-  if (showPag) {
+  pag.style.display = (showPag && isTable) ? 'flex' : 'none';
+  if (showPag && isTable) {
     document.getElementById('pageInfo').textContent    = infoText;
     document.getElementById('pageCounter').textContent = counterT;
     document.getElementById('btnFirst').disabled = pageNumber === 1;
@@ -2745,8 +2749,8 @@ function updatePaginationControls() {
   }
 
   const listPag = document.getElementById('listPagination');
-  listPag.style.display = showPag ? 'flex' : 'none';
-  if (showPag) {
+  listPag.style.display = (showPag && isList) ? 'flex' : 'none';
+  if (showPag && isList) {
     document.getElementById('listPageInfo').textContent    = infoText;
     document.getElementById('listPageCounter').textContent = counterT;
     document.getElementById('listBtnFirst').disabled = pageNumber === 1;
