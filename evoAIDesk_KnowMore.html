@@ -7,7 +7,15 @@
   --accent:#00e5a0;--accent2:#00b8ff;--danger:#ff4d6d;--warn:#ffb730;
   --text:#e8f0fe;--muted:#6b7fa3;--purple:#c084fc;
 }
-.doc{max-width:900px;margin:0 auto;padding:32px 24px 48px;background:#080c10;font-family:'Sora',sans-serif;color:#e8f0fe;}
+.doc{
+  width:90%;
+  max-width:1400px; /* optional safety cap */
+  margin:0px auto;
+  padding:32px 24px 48px;
+  background:#080c10;
+  font-family:'Sora',sans-serif;
+  color:#e8f0fe;
+}
 
 .hero{border:1px solid var(--border);border-radius:16px;background:var(--surface);padding:36px 40px;margin-bottom:20px;position:relative;overflow:hidden;}
 .hero::before{content:'';position:absolute;top:-60px;right:-40px;width:280px;height:280px;border-radius:50%;background:radial-gradient(circle,rgba(0,229,160,.07) 0%,transparent 70%);}
@@ -176,9 +184,35 @@
 .soft-delete-step{display:flex;gap:10px;align-items:flex-start;font-size:.68rem;color:var(--muted);line-height:1.55;font-family:'Sora',sans-serif;}
 .step-num{width:20px;height:20px;border-radius:50%;background:rgba(192,132,252,.15);border:1px solid rgba(192,132,252,.3);color:var(--purple);font-size:.6rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;font-family:'DM Mono',monospace;}
 .soft-delete-step strong{color:var(--text);}
+
+.back-link{
+  display:block;              /* 👈 important */
+  width:max-content;          /* keep button size tight */
+  margin:0 0 16px auto;       /* 👈 pushes it to the right */
+
+  align-items:center;
+  gap:6px;
+  font-size:.72rem;
+  font-weight:600;
+  color:var(--accent2);
+  text-decoration:none;
+  padding:6px 10px;
+  border-radius:6px;
+  background:rgba(0,184,255,0.08);
+  border:1px solid rgba(0,184,255,0.2);
+  transition:all .2s ease;
+}
+
+.back-link:hover{
+  background:rgba(0,184,255,0.18);
+  color:#fff;
+  transform:translateX(-2px);
+}
 </style>
 
 <div class="doc">
+
+
 
 <!-- HERO -->
 <div class="hero">
@@ -186,8 +220,10 @@
     <img class="logo-img" src="https://desk.evoaiglobal.ai/images/evoaidesk.png" alt="evoAIDesk"/>
     <span class="logo-badge">AI Powered</span>
     <div class="hero-divider"></div>
-    <span class="product-tag">Lead Management Platform</span>
+	
+    <span class="product-tag">Lead Management Platform</span>	
   </div>
+  <div><a href="index.html" class="back-link">← Back to Home</a></div>
   <div class="hero-title">Smarter Lead Management<br>for <span class="g">Growing Businesses</span></div>
   <div class="hero-sub">evoAIDesk is a cloud-based CRM and lead management platform purpose-built for small and growing businesses. Track every lead, automate outreach, monitor your pipeline, and close more deals — all from one clean dashboard.</div>
   <div class="hero-pills">
