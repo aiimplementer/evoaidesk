@@ -64,18 +64,46 @@
   /* ─── Map Firestore doc → internal lead object ─── */
   window.docToLead = (docSnap) => {
     const d = docSnap.data();
+
+    /* toDate: converts Firestore Timestamp / string / null → YYYY-MM-DD string or '' */
     const toDate = (v) => {
       if (!v) return '';
-      if (typeof v === 'string') return v;
-      if (v?.toDate) return v.toDate().toISOString().slice(0,10);
-      return String(v);
+      try {
+        if (typeof v === 'string') return v.trim();
+        if (typeof v === 'object' && typeof v.toDate === 'function') {
+          const dt = v.toDate();
+          return isNaN(dt.getTime()) ? '' : dt.toISOString().slice(0, 10);
+        }
+        // Raw Firestore Timestamp shape {seconds, nanoseconds}
+        if (typeof v === 'object' && typeof v.seconds === 'number') {
+          const dt = new Date(v.seconds * 1000);
+          return isNaN(dt.getTime()) ? '' : dt.toISOString().slice(0, 10);
+        }
+      } catch(e) {
+        console.warn('[evoAIDesk] docToLead toDate: failed →', v, e);
+      }
+      return '';
     };
+
+    /* toISO: converts Firestore Timestamp / string / null → full ISO string or '' */
     const toISO = (v) => {
       if (!v) return '';
-      if (typeof v === 'string') return v;
-      if (v?.toDate) return v.toDate().toISOString();
-      return String(v);
+      try {
+        if (typeof v === 'string') return v.trim();
+        if (typeof v === 'object' && typeof v.toDate === 'function') {
+          const dt = v.toDate();
+          return isNaN(dt.getTime()) ? '' : dt.toISOString();
+        }
+        if (typeof v === 'object' && typeof v.seconds === 'number') {
+          const dt = new Date(v.seconds * 1000);
+          return isNaN(dt.getTime()) ? '' : dt.toISOString();
+        }
+      } catch(e) {
+        console.warn('[evoAIDesk] docToLead toISO: failed →', v, e);
+      }
+      return '';
     };
+
     return {
       _docId:          docSnap.id,
       _snap:           docSnap,
@@ -94,10 +122,10 @@
       page:            d.page            || '',
       message:         d.message         || '',
       comments:        d.comments        || '',
-      userAgent:       d.userAgent        || '',
+      userAgent:       d.userAgent       || '',
       dealvalue:       d.dealValue != null ? String(d.dealValue) : '',
-      followup:        toDate(d.followupDate),
-      date:            toDate(d.createdAt),
+      followup:        d.followupDate ? toDate(d.followupDate) : '',
+      date:            d.createdAt       ? toDate(d.createdAt)  : '',
       // ── Assignment fields ──
       assignedTo:      d.assignedTo      || 'Unassigned',
       assignedToEmail: d.assignedToEmail || '',
@@ -326,6 +354,11 @@
     });
   };
 
+  /**
+  window.dbPermanentDeleteLead = async (docId) => {
+    await deleteDoc(doc(db, 'leads', docId));
+  };**/
+  
   window.dbPermanentDeleteLead = async (docId) => {
    // 1. Delete all activities in the subcollection
    const activitiesRef = collection(db, 'leads', docId, 'activities');
@@ -336,7 +369,7 @@
    // 2. Then delete the lead document itself
    await deleteDoc(doc(db, 'leads', docId));
   };
-
+  
   window.dbLoadTrash = async () => {
     const tenantId = window._currentTenantId || '';
     const snap = await getDocs(query(
@@ -448,19 +481,61 @@
     // Store tenant_id globally for use in all queries and writes
     window._currentTenantId = tenantId;
 
-    // ── Fetch tenant doc for currency + timezone ──
-    window._tenantCurrency = 'USD';   // default
-    window._tenantTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone; // browser default
+    // ── Fetch tenant doc for currency + timezone ── starts
+	// ── Fetch tenant doc for currency + timezone ──
+    // Set safe defaults FIRST — before any async call that could fail
+    window._tenantCurrency = 'USD';
+    window._tenantTimezone = 'UTC';
+
+    // Helper: validate an IANA timezone string by testing it with Intl
+    const isValidTz = (tz) => {
+      if (!tz || typeof tz !== 'string' || !tz.trim()) return false;
+      try { new Intl.DateTimeFormat('en-GB', { timeZone: tz.trim() }); return true; }
+      catch(e) { return false; }
+    };
+
     try {
       const tenantSnap = await getDoc(doc(db, 'tenants', tenantId));
       if (tenantSnap.exists()) {
-        const td = tenantSnap.data();
-        if (td.currency)  window._tenantCurrency = td.currency;
-        if (td.timezone)  window._tenantTimezone = td.timezone;
+        const td = tenantSnap.data() || {};
+
+        // ── Currency ──
+        if (td.currency && typeof td.currency === 'string' && td.currency.trim()) {
+          window._tenantCurrency = td.currency.trim().toUpperCase();
+        }
+
+        // ── Timezone: tenant field → browser tz → UTC ──
+        if (isValidTz(td.timezone)) {
+          window._tenantTimezone = td.timezone.trim();
+        } else {
+          if (td.timezone) {
+            console.warn('[evoAIDesk] Invalid timezone in tenant doc:', td.timezone,
+              '— Add a valid IANA string (e.g. "Asia/Kolkata") to tenants/' + tenantId);
+          } else {
+            console.warn('[evoAIDesk] No timezone field in tenant doc — tenants/' + tenantId,
+              '— Add field: timezone: "Asia/Kolkata"');
+          }
+          // Try browser timezone as fallback
+          const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+          if (isValidTz(browserTz)) {
+            window._tenantTimezone = browserTz;
+          }
+          // else stays 'UTC'
+        }
+      } else {
+        console.warn('[evoAIDesk] Tenant doc not found for:', tenantId, '— using UTC / USD');
       }
     } catch(e) {
-      console.warn('Could not fetch tenant doc for currency/timezone:', e);
+      console.warn('[evoAIDesk] Could not fetch tenant doc:', e.message || e, '— using UTC / USD');
+      // Safe defaults already set above — app continues normally
     }
+
+    console.log('[evoAIDesk] Tenant config →', {
+      id: tenantId,
+      currency: window._tenantCurrency,
+      timezone: window._tenantTimezone,
+    });
+    // ends
 
     // Format tenant name for display (e.g. "annex-cloud-inc" → "Annex Cloud Inc")
     const tenantDisplay = tenantId.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
@@ -2307,35 +2382,97 @@ let currentView   = 'table';
    e.g. "12 Apr 2025, 09:41 AM IST"
    If dateOnly is true → returns just the date part (no time), e.g. "12 Apr 2025"
 ──────────────────────────────────────────────────────────────────────── */
-function fmtDate(value, dateOnly = false) {
-  if (!value) return '—';
-  let d;
-  if (typeof value === 'string') {
-    // YYYY-MM-DD strings: treat as local midnight to avoid UTC shift
-    d = /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
-      ? new Date(value.trim() + 'T00:00:00')
-      : new Date(value);
-  } else if (value?.toDate) {
-    d = value.toDate();
-  } else {
-    d = new Date(value);
+/* ── Safe timezone resolver ───────────────────────────────────────────────
+   Tries: tenant tz → browser tz → UTC. Never throws.
+──────────────────────────────────────────────────────────────────────── */
+function getSafeTz() {
+  const candidates = [
+    window._tenantTimezone,
+    Intl.DateTimeFormat().resolvedOptions().timeZone,
+    'UTC',
+  ];
+  for (const tz of candidates) {
+    if (!tz || typeof tz !== 'string' || !tz.trim()) continue;
+    try {
+      new Intl.DateTimeFormat('en-GB', { timeZone: tz.trim() });
+      return tz.trim();
+    } catch(e) {
+      console.warn('[evoAIDesk] getSafeTz: skipping invalid tz →', tz);
+    }
   }
-  if (isNaN(d.getTime())) return String(value).slice(0, 10) || '—';
-  const tz = window._tenantTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return 'UTC';
+}
+
+/* ── Tenant-aware date formatter ──────────────────────────────────────────
+   Accepts: ISO string · date-only string (YYYY-MM-DD) · Firestore Timestamp
+            · JS Date · Unix ms number · null / undefined → '—'
+   dateOnly = true  →  "11 Apr 2026"
+   dateOnly = false →  "11 Apr 2026, 02:30 PM IST"
+   Never crashes regardless of input or timezone state.
+──────────────────────────────────────────────────────────────────────── */
+function fmtDate(value, dateOnly = false) {
+  if (value === null || value === undefined || value === '') return '—';
+
+  // ── 1. Coerce to JS Date ──
+  let d;
+  try {
+    if (value instanceof Date) {
+      d = value;
+    } else if (typeof value === 'number') {
+      d = new Date(value);
+    } else if (typeof value === 'object' && typeof value.toDate === 'function') {
+      d = value.toDate(); // Firestore Timestamp
+    } else if (typeof value === 'string') {
+      const s = value.trim();
+      if (!s) return '—';
+      // Date-only: parse as local midnight to avoid UTC off-by-one-day
+      d = /^\d{4}-\d{2}-\d{2}$/.test(s)
+        ? new Date(s + 'T00:00:00')
+        : new Date(s);
+    } else {
+      d = new Date(String(value));
+    }
+  } catch(e) {
+    console.warn('[evoAIDesk] fmtDate: coercion failed for value →', value, e);
+    return '—';
+  }
+
+  // ── 2. Validate ──
+  if (!d || isNaN(d.getTime())) {
+    console.warn('[evoAIDesk] fmtDate: invalid date →', value);
+    return '—';
+  }
+
+  // ── 3. Get guaranteed-valid timezone ──
+  const tz = getSafeTz();
+
+  // ── 4. Format ──
   try {
     if (dateOnly) {
       return new Intl.DateTimeFormat('en-GB', {
-        day: '2-digit', month: 'short', year: 'numeric', timeZone: tz,
+        day: '2-digit', month: 'short', year: 'numeric',
+        timeZone: tz,
       }).format(d);
     }
     return new Intl.DateTimeFormat('en-GB', {
       day: '2-digit', month: 'short', year: 'numeric',
       hour: '2-digit', minute: '2-digit', hour12: true,
-      timeZone: tz, timeZoneName: 'short',
+      timeZone: tz,
     }).format(d);
   } catch(e) {
-    // Fallback if timezone string is invalid
-    return d.toLocaleString();
+    console.warn('[evoAIDesk] fmtDate: Intl failed, falling back to UTC →', e);
+    try {
+      return new Intl.DateTimeFormat('en-GB', {
+        day: '2-digit', month: 'short', year: 'numeric',
+        ...(dateOnly ? {} : {
+          hour: '2-digit', minute: '2-digit',
+          hour12: true, timeZoneName: 'short',
+        }),
+        timeZone: 'UTC',
+      }).format(d);
+    } catch(e2) {
+      return dateOnly ? d.toDateString() : d.toString();
+    }
   }
 }
 
@@ -3213,14 +3350,14 @@ function assignToMe() {
 let _viewingDocId = null;
 
 const N8N_WEBHOOKS = {
-  send_intro_email:    API.n8n_trigger_email_workflow,
-  send_proposal:       API.n8n_trigger_email_workflow,
-  enrich_linkedin:     'https://your-n8n-instance/webhook/enrich-linkedin',
-  add_to_crm:          'https://your-n8n-instance/webhook/add-to-crm',
-  schedule_followup:   API.n8n_trigger_email_workflow,
-  send_whatsapp:       API.n8n_trigger_email_workflow,
-  notify_slack:        'https://your-n8n-instance/webhook/notify-slack',
-  send_nurture:        API.n8n_trigger_email_workflow
+  send_intro_email:    API.n8n_workflow,
+  send_proposal:       API.n8n_workflow,
+  enrich_linkedin:    'https://your-n8n-instance/webhook/enrich-linkedin',
+  add_to_crm:         'https://your-n8n-instance/webhook/add-to-crm',
+  schedule_followup:   API.n8n_workflow,
+  send_whatsapp:       API.n8n_workflow,
+  notify_slack:       'https://your-n8n-instance/webhook/notify-slack',
+  send_nurture:        API.n8n_workflow,
 };
 const AUTO_ACTIONS = [
   {id:'send_intro_email', label:'Send Intro Email',    icon:'📧', badge:'Email'},
@@ -3273,12 +3410,26 @@ async function viewLead(leadId, docId, preloadedLead = null) {
   ].map(([k,v]) => `<div style="flex:1;padding:10px 14px;border-right:1px solid var(--border);min-width:0;"><div style="font-size:.62rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;">${k}</div><div style="font-size:.81rem;font-weight:700;color:${k==='👤 Assigned To'&&v!=='Unassigned'?'var(--accent2)':'var(--text)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(v)}</div></div>`).join('') + `<div style="width:14px;"></div>`;
 
   const section = (title, rows) => {
-    const filled = rows.filter(([,v]) => v && String(v).trim() && String(v) !== '—');
-    if(!filled.length) return '';
-    return `<div class="view-section"><div class="view-section-title">${title}</div>
-      ${filled.map(([k,v,link]) => `<div class="view-row"><span class="view-key">${k}</span><span class="view-val">${
-        k==='Status' ? statusBadge(v) : link ? `<a href="${esc(v)}" target="_blank">${esc(v)}</a>` : esc(String(v||'—'))
-      }</span></div>`).join('')}</div>`;
+    const filled = rows.filter(([, v]) => {
+      if (v === null || v === undefined || v === '') return false;
+      const s = String(v).trim();
+      return s !== '' && s !== '—';
+    });
+    if (!filled.length) return '';
+    return `<div class="view-section">
+      <div class="view-section-title">${esc(title)}</div>
+      ${filled.map(([k, v, link]) => `
+        <div class="view-row">
+          <span class="view-key">${esc(k)}</span>
+          <span class="view-val">${
+            k === 'Status'
+              ? statusBadge(v)
+              : link
+                ? `<a href="${esc(String(v))}" target="_blank" rel="noopener">${esc(String(v))}</a>`
+                : esc(String(v || '—'))
+          }</span>
+        </div>`).join('')}
+    </div>`;
   };
 
   // ── Assignment card ──
@@ -3315,11 +3466,32 @@ async function viewLead(leadId, docId, preloadedLead = null) {
 
   document.getElementById('viewBody').innerHTML =
     assignmentHtml +
-    section('Contact Information', [['Name',lead.name],['Email',lead.email],['Phone',lead.phone],['LinkedIn',lead.linkedin,true]]) +
-    section('Company', [['Company',lead.company],['Job Title',lead.jobtitle],['Industry',lead.industry]]) +
-    section('Lead Details', [['Status',lead.status],['Service',lead.service],['Source',lead.source],['Page',lead.page],['Created At', fmtDate(lead.date)]]) +
-    section('System IDs', [['Lead ID',lead.leadId],['Reference Lead ID',lead.reference_lead_id]]) +
-    section('Notes', [['Message',lead.message],['Comments',lead.comments]]);
+    section('Contact Information', [
+      ['Name',       lead.name],
+      ['Email',      lead.email],
+      ['Phone',      lead.phone],
+      ['LinkedIn',   lead.linkedin, true],
+    ]) +
+    section('Company', [
+      ['Company',    lead.company],
+      ['Job Title',  lead.jobtitle],
+      ['Industry',   lead.industry],
+    ]) +
+    section('Lead Details', [
+      ['Status',     lead.status],
+      ['Service',    lead.service],
+      ['Source',     lead.source],
+      ['Page / URL', lead.page],
+      ['Created At', lead.date ? fmtDate(lead.date, true) : '—'],
+    ]) +
+    section('System IDs', [
+      ['Lead ID',            lead.leadId],
+      ['Reference Lead ID',  lead.reference_lead_id],
+    ]) +
+    section('Notes', [
+      ['Message',  lead.message],
+      ['Comments', lead.comments],
+    ]);
 
   document.getElementById('timelineBody').innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted);font-size:.78rem;"><div class="spinner" style="margin:0 auto 8px"></div>Loading…</div>`;
   await loadActivities(_viewingDocId);
@@ -3446,7 +3618,7 @@ async function triggerN8n(actionId, lead, btnEl) {
 
   
   try {
-     await fetch(url, {method:'POST',headers:{'Content-Type':'application/json'},
+     await fetch(url, {method:'POST',mode: 'no-cors',headers:{'Content-Type':'application/json','ngrok-skip-browser-warning': 'true'},
       body:JSON.stringify({
         leadId: lead.leadId, name: lead.name, email: lead.email,
         phone: lead.phone, company: lead.company, status: lead.status,
