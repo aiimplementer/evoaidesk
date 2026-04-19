@@ -2924,14 +2924,16 @@ function setView(view, btn) {
   btn.style.background = 'var(--surface)'; btn.style.color = 'var(--accent)';
   if (view === 'board') {
     loadBoardView();
-    // Hide pagination while in board view
     document.getElementById('pagination').style.display     = 'none';
     document.getElementById('listPagination').style.display = 'none';
   } else {
-    renderCurrentView();
-    // Restore pagination controls when switching back to table or list
-    if (!isSearchMode && !isOverdueMode && !isMyLeadsMode && !isTrashMode) {
-      updatePaginationControls();
+    // In special display modes, just re-render existing data
+    if (isSearchMode || isOverdueMode || isMyLeadsMode || isTrashMode) {
+      renderCurrentView();
+    } else {
+      // Always reload so totalCount is fresh and pagination renders correctly
+      resetPagination();
+      loadPage('first');
     }
   }
 }
