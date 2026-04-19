@@ -754,9 +754,27 @@
     .trust { gap: 24px; }
     .plans { grid-template-columns: 1fr; }
   }
+  
+  .footer-bottom{width: 80%;margin: 64px auto 0;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem}
+  .footer-logo{font-size:1.35rem;font-weight:600;letter-spacing:-0.3px}
+  .footer-logo .evo{color:var(--green);font-weight:300}
+ .footer-logo .ai{color:var(--blue);font-weight:700}
+ .footer-links{display:flex;gap:2rem;list-style:none}
+ .footer-links a{font-size:0.83rem;color:var(--muted);transition:color 0.2s}
+ .footer-links a:hover{color:var(--white)}
+ .footer-tagline{font-size:0.78rem;color:var(--muted);letter-spacing:0.06em}
+ .footer-copy{font-size:0.78rem;color:var(--muted)}
+ .footer-legal{display:flex;gap:1.5rem;list-style:none}
+ .footer-legal a{font-size:0.78rem;color:var(--muted);transition:color 0.2s;text-decoration:underline;text-underline-offset:3px}
+ .footer-legal a:hover{color:var(--white)}
+
+ footer {
+  border-top: 1px solid rgba(255,255,255,0.05);
+ }
 </style>
+<script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
+<body  >
 
 <div class="blob blob-1"></div>
 <div class="blob blob-2"></div>
@@ -908,7 +926,7 @@
         <span class="enterprise-pill">Account manager</span>
       </div>
     </div>
-    <a href="#contact" style="text-decoration:none;"><button class="enterprise-btn">Contact Sales →</button></a>
+    <a href="https://evoaiglobal.ai/#contact" style="text-decoration:none;"><button class="enterprise-btn">Contact Sales →</button></a>
   </div>
 
   <!-- ADD-ONS -->
@@ -1112,8 +1130,60 @@
 </main>
 
 <!-- FOOTER -->
-<footer>
-  <p>© 2026 evoAIDesk · <a href="#">Privacy</a> · <a href="#">Terms</a> · <a href="#">Contact</a></p>
+<footer class="bg-[#0b1220] text-gray-400 pt-20 pb-12 px-6">
+  <div class="max-w-6xl mx-auto grid md:grid-cols-4 gap-12 text-sm">
+
+    <!-- Brand -->
+    <div>
+      <div class="flex items-center gap-3 mb-5">
+        <img src="https://desk.evoaiglobal.ai/images/evoaidesk.png" class="h-9">
+      </div>
+      <p class="text-gray-500 leading-relaxed">
+        Smart lead management platform built for modern AI-driven teams.
+      </p>
+    </div>
+
+    <!-- Product -->
+    <div>
+      <h4 class="text-white font-semibold mb-5">Product</h4>
+      <ul class="space-y-3">
+        <li><a href="#features" class="hover:text-green-400 transition">Features</a></li>
+        <li><a href="evoAIDesk_KnowMore.html" class="hover:text-green-400 transition">Full Product</a></li>
+        <li><a href="login.html" class="hover:text-green-400 transition">Login</a></li>
+      </ul>
+    </div>
+
+    <!-- Company -->
+    <div>
+      <h4 class="text-white font-semibold mb-5">Company</h4>
+      <ul class="space-y-3">
+        <li><a href="https://evoaiglobal.ai" class="hover:text-green-400 transition">About</a></li>
+        <li><a href="#contact" class="hover:text-green-400 transition">Contact</a></li>
+      </ul>
+    </div>
+
+    <!-- CTA -->
+    <div>
+      <h4 class="text-white font-semibold mb-5">Get Started</h4>
+      <p class="text-gray-500 mb-5 leading-relaxed">
+        Start managing your leads smarter today.
+      </p>
+      <a href="login.html" class="inline-block px-6 py-3 bg-green-400 text-black rounded-lg font-semibold hover:opacity-90 transition">
+        Get Started
+      </a>
+    </div>
+
+  </div>
+
+  <!-- Bottom Strip -->
+  <div class="footer-bottom">
+    <p class="footer-copy">&copy; 2026 evoAI. All rights reserved.</p>
+    <p class="footer-copy">Powered by <a href="https://evoaiglobal.ai/#services" style="color:var(--green);text-decoration:underline;text-underline-offset:3px;">evoAI</a></p>
+    <ul class="footer-legal">
+      <li><a href="https://evoaiglobal.ai/privacy-policy.html">Privacy Policy</a></li>
+      <li><a href="https://evoaiglobal.ai/terms.html">Terms &amp; Conditions</a></li>
+    </ul>
+  </div>
 </footer>
 
 <script>
