@@ -3465,8 +3465,8 @@ async function triggerN8n(actionId, lead, btnEl) {
    REPORTS — n8n webhooks returning HTML
 ════════════════════════════════════════════════════ */
 const N8N_REPORT_WEBHOOKS = {
-  full_pipeline:    AIP.n8n_activity_pipeline,
-  stage_pipeline:   AIP.n8n_activity_pipeline,
+  full_pipeline:    API.n8n_activity_pipeline,
+  stage_pipeline:   API.n8n_activity_pipeline,
 };
 
 async function fetchReport(reportType, btnEl) {
