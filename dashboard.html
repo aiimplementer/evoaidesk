@@ -3647,25 +3647,33 @@ async function triggerN8n(actionId, lead, btnEl) {
 
   
   try {
-     await fetch(url, {method:'POST',headers:{'Content-Type':'application/json','ngrok-skip-browser-warning': 'true'},
-      body:JSON.stringify({
-        leadId: lead.leadId, name: lead.name, email: lead.email,
-        phone: lead.phone, company: lead.company, status: lead.status,
-        service: lead.service, actId: actionId, followup_date: lead.followup,
-        assignedTo: lead.assignedTo, assignedToEmail: lead.assignedToEmail,
-		evoUserName: evo_username, evoUserEmail: evo_useremail, tenantId: lead.tenantId,
-        triggeredAt: new Date().toISOString(),
-      })});
+    // no-cors mode: browser blocks custom headers like Content-Type
+    // Use a URLSearchParams body (sent as text/plain) so n8n receives parseable data
+    // OR use a Blob with type application/json which bypasses the no-cors header restriction
+    const payload = JSON.stringify({
+      leadId: lead.leadId, name: lead.name, email: lead.email,
+      phone: lead.phone, company: lead.company, status: lead.status,
+      service: lead.service, actId: actionId, followup_date: lead.followup,
+      assignedTo: lead.assignedTo, assignedToEmail: lead.assignedToEmail,
+      evoUserName: evo_username, evoUserEmail: evo_useremail, tenantId: lead.tenantId,
+      triggeredAt: new Date().toISOString(),
+    });
+    await fetch(url, {
+      method: 'POST',
+      mode: 'no-cors',
+      body: new Blob([payload], { type: 'application/json' }),
+    });
+    // no-cors always returns opaque response — assume success if no exception thrown
     btnEl.classList.remove('running'); btnEl.classList.add('done'); btnEl.textContent = '✓ Triggered';
-    toast(`Automation: ${actionId.replace(/_/g,' ')} completed successfully`,'success');
-    if(_viewingDocId) {
-      await window.dbAddActivity(_viewingDocId,{type:'auto',text:`Automation triggered: ${actionId.replace(/_/g,' ')}`,user:document.getElementById('sideUserName').textContent||'Team'});
+    toast(`Automation: ${actionId.replace(/_/g,' ')} triggered successfully`, 'success');
+    if (_viewingDocId) {
+      await window.dbAddActivity(_viewingDocId, { type: 'auto', text: `Automation triggered: ${actionId.replace(/_/g,' ')}`, user: document.getElementById('sideUserName').textContent || 'Team' });
       await loadActivities(_viewingDocId);
     }
   } catch(e) {
     btnEl.classList.remove('running'); btnEl.textContent = '⚠ Failed';
-	console.error('n8n trigger error:', e);
-    toast('n8n webhook failed — check URL config'+ e.message,'error');
+    console.error('[n8n] trigger error:', actionId, e);
+    toast('n8n webhook failed — ' + (e.message || 'check URL config'), 'error');
   }
 }
 
