@@ -3379,14 +3379,14 @@ function assignToMe() {
 let _viewingDocId = null;
 
 const N8N_WEBHOOKS = {
-  send_intro_email:    API.n8n_workflow,
-  send_proposal:       API.n8n_workflow,
+  send_intro_email:    API.n8n_trigger_email_workflow,
+  send_proposal:       API.n8n_trigger_email_workflow,
   enrich_linkedin:    'https://your-n8n-instance/webhook/enrich-linkedin',
   add_to_crm:         'https://your-n8n-instance/webhook/add-to-crm',
-  schedule_followup:   API.n8n_workflow,
-  send_whatsapp:       API.n8n_workflow,
+  schedule_followup:   API.n8n_trigger_email_workflow,
+  send_whatsapp:       API.n8n_trigger_email_workflow,
   notify_slack:       'https://your-n8n-instance/webhook/notify-slack',
-  send_nurture:        API.n8n_workflow,
+  send_nurture:        API.n8n_trigger_email_workflow,
 };
 const AUTO_ACTIONS = [
   {id:'send_intro_email', label:'Send Intro Email',    icon:'📧', badge:'Email'},
