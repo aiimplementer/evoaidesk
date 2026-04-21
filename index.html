@@ -245,6 +245,48 @@
     .limit-pill .lval { font-size: .9rem; font-weight: 700; color: var(--text); font-family: var(--mono); }
     .limit-pill .lkey { font-size: .6rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-top: 2px; }
     .plan-divider { height: 1px; background: var(--border); margin-bottom: 22px; }
+
+    /* ── Onboarding + Workflow limits ── */
+    .plan-setup {
+      background: rgba(76,222,60,0.04);
+      border: 1px solid rgba(76,222,60,0.15);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .plan-setup-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .plan-setup-label {
+      font-size: .68rem;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .plan-setup-label svg { flex-shrink: 0; opacity: .6; }
+    .plan-setup-val {
+      font-size: .72rem;
+      font-weight: 700;
+      color: var(--accent);
+      font-family: var(--mono);
+      white-space: nowrap;
+    }
+    .plan-setup-divider { height: 1px; background: rgba(76,222,60,0.1); }
+    .plan-setup-title {
+      font-size: .6rem;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: rgba(76,222,60,0.5);
+      margin-bottom: 2px;
+    }
     .plan-features { list-style: none; display: flex; flex-direction: column; gap: 10px; flex: 1; margin-bottom: 28px; padding: 0; }
     .plan-features li { display: flex; align-items: flex-start; gap: 10px; font-size: .78rem; color: var(--muted); line-height: 1.5; }
     .plan-features li .check {
@@ -611,6 +653,32 @@
           <div class="limit-pill"><div class="lval">3</div><div class="lkey">Users</div></div>
           <div class="limit-pill"><div class="lval">1.5K</div><div class="lkey">Leads</div></div>
         </div>
+        <!-- Onboarding & Workflow limits -->
+        <div class="plan-setup">
+          <div class="plan-setup-title">Done-for-you setup</div>
+          <div class="plan-setup-row">
+            <span class="plan-setup-label">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              One-time onboarding
+            </span>
+            <span class="plan-setup-val">$99</span>
+          </div>
+          <div class="plan-setup-divider"></div>
+          <div class="plan-setup-row">
+            <span class="plan-setup-label">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              n8n workflows configured
+            </span>
+            <span class="plan-setup-val">2 workflows</span>
+          </div>
+          <div class="plan-setup-row">
+            <span class="plan-setup-label">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+              Lead capture forms
+            </span>
+            <span class="plan-setup-val">1 form</span>
+          </div>
+        </div>
         <div class="plan-divider"></div>
         <ul class="plan-features">
           <li><span class="check"><svg viewBox="0 0 10 8" fill="none"><polyline points="1,4 4,7 9,1" stroke="#4cde3c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>AI lead scoring</li>
@@ -636,6 +704,32 @@
           <div class="limit-pill"><div class="lval">3</div><div class="lkey">Users</div></div>
           <div class="limit-pill"><div class="lval">3K</div><div class="lkey">Leads</div></div>
         </div>
+        <!-- Onboarding & Workflow limits -->
+        <div class="plan-setup">
+          <div class="plan-setup-title">Done-for-you setup</div>
+          <div class="plan-setup-row">
+            <span class="plan-setup-label">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              One-time onboarding
+            </span>
+            <span class="plan-setup-val">$149</span>
+          </div>
+          <div class="plan-setup-divider"></div>
+          <div class="plan-setup-row">
+            <span class="plan-setup-label">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              n8n workflows configured
+            </span>
+            <span class="plan-setup-val">4 workflows</span>
+          </div>
+          <div class="plan-setup-row">
+            <span class="plan-setup-label">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+              Lead capture forms
+            </span>
+            <span class="plan-setup-val">2 forms</span>
+          </div>
+        </div>
         <div class="plan-divider"></div>
         <ul class="plan-features">
           <li><span class="check"><svg viewBox="0 0 10 8" fill="none"><polyline points="1,4 4,7 9,1" stroke="#4cde3c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Everything in Starter</li>
@@ -660,6 +754,32 @@
         <div class="plan-limits">
           <div class="limit-pill"><div class="lval">5</div><div class="lkey">Users</div></div>
           <div class="limit-pill"><div class="lval">5K</div><div class="lkey">Leads</div></div>
+        </div>
+        <!-- Onboarding & Workflow limits -->
+        <div class="plan-setup">
+          <div class="plan-setup-title">Done-for-you setup</div>
+          <div class="plan-setup-row">
+            <span class="plan-setup-label">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              One-time onboarding
+            </span>
+            <span class="plan-setup-val">$199</span>
+          </div>
+          <div class="plan-setup-divider"></div>
+          <div class="plan-setup-row">
+            <span class="plan-setup-label">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              n8n workflows configured
+            </span>
+            <span class="plan-setup-val">6 + 1 custom</span>
+          </div>
+          <div class="plan-setup-row">
+            <span class="plan-setup-label">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+              Lead capture forms
+            </span>
+            <span class="plan-setup-val">3 forms</span>
+          </div>
         </div>
         <div class="plan-divider"></div>
         <ul class="plan-features">
@@ -704,8 +824,8 @@
         </div>
         <div style="flex:1;min-width:200px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 24px;">
           <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Onboarding Session</div>
-          <div style="font-size:1.4rem;font-weight:800;margin-bottom:4px;">$99 <span style="font-size:.8rem;font-weight:400;color:var(--muted);">one-time</span></div>
-          <div style="font-size:.75rem;color:var(--muted);">1hr setup call + data migration assistance</div>
+          <div style="font-size:1.4rem;font-weight:800;margin-bottom:4px;">$99–$199 <span style="font-size:.8rem;font-weight:400;color:var(--muted);">one-time</span></div>
+          <div style="font-size:.75rem;color:var(--muted);">n8n automation config, forms setup + data migration — we handle everything</div>
         </div>
         <div style="flex:1;min-width:200px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 24px;">
           <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">White-label</div>
