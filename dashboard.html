@@ -491,7 +491,7 @@
 	// ── Fetch tenant doc for currency + timezone ──
     // Set safe defaults FIRST — before any async call that could fail
     window._tenantCurrency = 'USD';
-    window._tenantTimezone = 'UTC';
+    window._tenantTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
     // Helper: validate an IANA timezone string by testing it with Intl
     const isValidTz = (tz) => {
@@ -2431,10 +2431,13 @@ function fmtDate(value, dateOnly = false) {
     } else if (typeof value === 'string') {
       const s = value.trim();
       if (!s) return '—';
-      // Date-only: parse as local midnight to avoid UTC off-by-one-day
-      d = /^\d{4}-\d{2}-\d{2}$/.test(s)
-        ? new Date(s + 'T00:00:00')
-        : new Date(s);
+      // Date-only string (YYYY-MM-DD) — already in local time from toDate(), format directly
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+        const [yr, mo, dy] = s.split('-').map(Number);
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return `${String(dy).padStart(2,'0')} ${months[mo-1]} ${yr}`;
+      }
+      d = new Date(s);
     } else {
       d = new Date(String(value));
     }
