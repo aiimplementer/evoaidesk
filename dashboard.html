@@ -66,18 +66,24 @@
     const d = docSnap.data();
 
     /* toDate: converts Firestore Timestamp / string / null → YYYY-MM-DD string or '' */
+    // Converts a JS Date to a local YYYY-MM-DD string (avoids UTC off-by-one-day)
+    const toLocalDateStr = (dt) => {
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+    };
+
     const toDate = (v) => {
       if (!v) return '';
       try {
         if (typeof v === 'string') return v.trim();
         if (typeof v === 'object' && typeof v.toDate === 'function') {
           const dt = v.toDate();
-          return isNaN(dt.getTime()) ? '' : dt.toISOString().slice(0, 10);
+          return isNaN(dt.getTime()) ? '' : toLocalDateStr(dt);
         }
         // Raw Firestore Timestamp shape {seconds, nanoseconds}
         if (typeof v === 'object' && typeof v.seconds === 'number') {
           const dt = new Date(v.seconds * 1000);
-          return isNaN(dt.getTime()) ? '' : dt.toISOString().slice(0, 10);
+          return isNaN(dt.getTime()) ? '' : toLocalDateStr(dt);
         }
       } catch(e) {
         console.warn('[evoAIDesk] docToLead toDate: failed →', v, e);
