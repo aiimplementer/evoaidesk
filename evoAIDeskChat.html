@@ -10,7 +10,7 @@
   // Step 1 — receive tenantId from parent dashboard via postMessage
   window.addEventListener('message', (event) => {
     // IMPORTANT: lock this to your dashboard origin
-    if (event.origin !== 'https://your-evoaidesk-domain.com') return;
+    if (event.origin !== 'https://desk.evoaiglobal.ai/') return;
 
     const { tenantId } = event.data;
     if (!tenantId) return;
@@ -22,7 +22,7 @@
   function initChat(tenantId) {
     window.n8nChat.createChat({
       webhookUrl: 'https://your-n8n.com/webhook/evoaidesk-chat-webhook',
-      metadata: { 'evoai' },           // passes cleanly into $json.metadata.tenantId
+      metadata: { tenantId },           // passes cleanly into $json.metadata.tenantId
       initialMessages: ['How can I assist you today?'],
       i18n: { en: { title: 'evoAIDesk' } }
     });
