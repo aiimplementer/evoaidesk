@@ -1,0 +1,1273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Email Settings — evoAIDesk</title>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<link rel="icon" type="image/x-icon" href="https://evoaiglobal.ai/images/favicon.ico">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0d1117;
+    --surface:   #161b22;
+    --border:    #21262d;
+    --accent:    #00e5a0;
+    --accent2:   #0af;
+    --text:      #e6edf3;
+    --muted:     #6b7fa3;
+    --danger:    #ff4d6d;
+    --warning:   #f0a030;
+    --success:   #00e5a0;
+    --font:      'Sora', sans-serif;
+    --mono:      'DM Mono', monospace;
+  }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Top bar ── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 2rem;
+    height: 56px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .topbar-logo {
+    font-size: 1.2rem;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--text);
+    text-decoration: none;
+  }
+  .topbar-logo span { color: var(--accent); }
+  .topbar-back {
+    display: flex;
+    align-items: center;
+    gap: .4rem;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: .85rem;
+    transition: color .2s;
+  }
+  .topbar-back:hover { color: var(--text); }
+  .topbar-user {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    font-size: .82rem;
+    color: var(--muted);
+  }
+  .avatar {
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: flex; align-items: center; justify-content: center;
+    font-size: .7rem; font-weight: 700; color: #000;
+  }
+
+  /* ── Loading overlay ── */
+  #authLoading {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 1rem; z-index: 999;
+  }
+  .spinner {
+    width: 36px; height: 36px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Main layout ── */
+  .main {
+    flex: 1;
+    max-width: 860px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem;
+  }
+
+  .page-title {
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin-bottom: .4rem;
+  }
+  .page-subtitle {
+    font-size: .875rem;
+    color: var(--muted);
+    margin-bottom: 2rem;
+    line-height: 1.5;
+  }
+
+  /* ── Card ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.75rem;
+    margin-bottom: 1.25rem;
+  }
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    margin-bottom: 1.25rem;
+  }
+  .card-icon {
+    width: 40px; height: 40px;
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.2rem;
+    flex-shrink: 0;
+  }
+  .card-icon.gmail  { background: rgba(234,67,53,.15); }
+  .card-title { font-size: 1rem; font-weight: 600; }
+  .card-desc  { font-size: .8rem; color: var(--muted); margin-top: .15rem; }
+
+  /* ── Status badge ── */
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    font-size: .75rem;
+    font-weight: 500;
+    padding: .25rem .65rem;
+    border-radius: 20px;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+  .status-badge.connected    { background: rgba(0,229,160,.12); color: var(--success); border: 1px solid rgba(0,229,160,.25); }
+  .status-badge.disconnected { background: rgba(107,127,163,.1); color: var(--muted);  border: 1px solid rgba(107,127,163,.2); }
+  .status-badge.error        { background: rgba(255,77,109,.1);  color: var(--danger); border: 1px solid rgba(255,77,109,.2); }
+  .status-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor;
+  }
+
+  /* ── Connected info box ── */
+  .connected-info {
+    background: rgba(0,229,160,.06);
+    border: 1px solid rgba(0,229,160,.2);
+    border-radius: 8px;
+    padding: 1rem 1.1rem;
+    margin-bottom: 1.1rem;
+    display: none;
+  }
+  .connected-info.show { display: block; }
+  .connected-email {
+    font-size: .9rem;
+    font-weight: 500;
+    color: var(--accent);
+    font-family: var(--mono);
+  }
+  .connected-label {
+    font-size: .75rem;
+    color: var(--muted);
+    margin-bottom: .2rem;
+  }
+  .connected-at {
+    font-size: .75rem;
+    color: var(--muted);
+    margin-top: .35rem;
+    font-family: var(--mono);
+  }
+  .connected-at span {
+    color: var(--text);
+  }
+
+  /* ── Gmail 3-column grid ── */
+  .gmail-grid {
+    display: grid;
+    grid-template-columns: auto 1fr 1fr;
+    gap: 0 1.5rem;
+    align-items: start;
+  }
+  .gmail-col {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Form fields ── */
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: .75rem;
+    margin-bottom: .75rem;
+  }
+  .form-group { margin-bottom: .75rem; }
+  .form-group label {
+    display: block;
+    font-size: .75rem;
+    font-weight: 500;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    margin-bottom: .35rem;
+  }
+  .form-group input, .form-group select {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: .6rem .85rem;
+    font-family: var(--font);
+    font-size: .875rem;
+    color: var(--text);
+    outline: none;
+    transition: border-color .2s;
+  }
+  .form-group input:focus, .form-group select:focus {
+    border-color: var(--accent2);
+  }
+  .form-group input::placeholder { color: var(--muted); opacity: .6; }
+  .form-group select option { background: var(--surface); }
+
+  /* ── Config rows ── */
+  .config-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .config-row-label {
+    font-size: .75rem;
+    font-weight: 500;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    flex-shrink: 0;
+  }
+  .config-row-value {
+    font-size: .875rem;
+    font-weight: 500;
+    color: var(--text);
+    font-family: var(--mono);
+  }
+  .config-row-right {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+  }
+  .config-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 1rem 0;
+  }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    padding: .6rem 1.2rem;
+    border-radius: 8px;
+    font-family: var(--font);
+    font-size: .875rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    transition: all .2s;
+    text-decoration: none;
+  }
+  .btn-google {
+    background: #fff;
+    color: #3c4043;
+    border: 1px solid #dadce0;
+    width: 100%;
+    justify-content: center;
+    padding: .7rem 1.2rem;
+    font-size: .9rem;
+  }
+  .btn-google:hover { background: #f8f9fa; box-shadow: 0 1px 6px rgba(0,0,0,.2); }
+  .btn-google img { width: 18px; height: 18px; }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #000;
+    font-weight: 600;
+  }
+  .btn-primary:hover { opacity: .88; }
+
+  .btn-outline {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+  }
+  .btn-outline:hover { border-color: var(--muted); color: var(--text); }
+
+  .btn-danger {
+    background: transparent;
+    color: var(--danger);
+    border: 1px solid rgba(255,77,109,.3);
+  }
+  .btn-danger:hover { background: rgba(255,77,109,.08); }
+
+  .btn-row {
+    display: flex;
+    gap: .6rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+  }
+
+  /* ── Divider ── */
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    margin: 1.1rem 0;
+    color: var(--muted);
+    font-size: .75rem;
+  }
+  .divider::before, .divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* ── Info note ── */
+  .note {
+    font-size: .78rem;
+    color: var(--muted);
+    line-height: 1.55;
+    margin-top: .75rem;
+    padding: .75rem 1rem;
+    background: rgba(107,127,163,.07);
+    border-radius: 7px;
+    border-left: 3px solid var(--border);
+  }
+
+  /* ── Toast ── */
+  #toast {
+    position: fixed;
+    bottom: 1.5rem; right: 1.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: .85rem 1.2rem;
+    font-size: .85rem;
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    box-shadow: 0 8px 24px rgba(0,0,0,.4);
+    transform: translateY(80px);
+    opacity: 0;
+    transition: all .3s ease;
+    z-index: 200;
+    max-width: 320px;
+  }
+  #toast.show { transform: translateY(0); opacity: 1; }
+  #toast.success { border-color: rgba(0,229,160,.4); }
+  #toast.error   { border-color: rgba(255,77,109,.4); }
+
+  /* ── Responsive ── */
+  @media (max-width: 480px) {
+    .form-row { grid-template-columns: 1fr; }
+    .main { padding: 1.5rem 1rem; }
+  }
+
+  /* ── Email Templates ── */
+  .tpl-tabs {
+    display: flex;
+    gap: .5rem;
+    margin-bottom: 1.25rem;
+  }
+  .tpl-tab {
+    padding: .45rem 1rem;
+    border-radius: 7px;
+    font-size: .82rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    font-family: var(--font);
+    transition: all .2s;
+  }
+  .tpl-tab.active {
+    background: rgba(0,170,255,.12);
+    border-color: rgba(0,170,255,.35);
+    color: var(--accent2);
+  }
+  .tpl-panel { display: none; }
+  .tpl-panel.active { display: block; }
+
+  .editor-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .3rem;
+    padding: .55rem .7rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    align-items: center;
+  }
+  .tb-btn {
+    padding: .28rem .55rem;
+    border-radius: 5px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted);
+    font-size: .82rem;
+    font-family: var(--font);
+    cursor: pointer;
+    transition: all .15s;
+    line-height: 1;
+  }
+  .tb-btn:hover { background: var(--surface); color: var(--text); border-color: var(--border); }
+  .tb-sep { width: 1px; height: 18px; background: var(--border); margin: 0 .15rem; flex-shrink: 0; }
+  .tb-color { width: 22px; height: 22px; border-radius: 4px; border: 1px solid var(--border); cursor: pointer; padding: 0; background: transparent; }
+
+  .editor-area {
+    min-height: 260px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 0 0 8px 8px;
+    padding: 1rem;
+    font-size: .875rem;
+    color: var(--text);
+    outline: none;
+    line-height: 1.7;
+    overflow-y: auto;
+  }
+  .editor-area:focus { border-color: var(--accent2); }
+  .editor-area a { color: var(--accent2); }
+
+  .tpl-meta {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: .75rem;
+    margin-bottom: .75rem;
+  }
+  .tpl-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 1rem;
+    gap: .75rem;
+    flex-wrap: wrap;
+  }
+  .tpl-status {
+    font-size: .78rem;
+    color: var(--muted);
+  }
+  .tpl-status.saved { color: var(--success); }
+  .tpl-status.saving { color: var(--warning); }
+  .tpl-status.error  { color: var(--danger); }
+
+  /* Preview modal */
+  .modal-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.65);
+    z-index: 500;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    width: min(720px, 95vw);
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-title { font-size: .95rem; font-weight: 600; }
+  .modal-close {
+    background: none; border: none; color: var(--muted);
+    font-size: 1.3rem; cursor: pointer; line-height: 1; padding: 0;
+  }
+  .modal-close:hover { color: var(--text); }
+  .modal-body { flex: 1; overflow: auto; padding: 1.25rem; }
+  .preview-frame {
+    width: 100%;
+    background: #fff;
+    border-radius: 8px;
+    border: none;
+    min-height: 400px;
+  }
+  .var-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem;
+    margin-top: .6rem;
+  }
+  .var-chip {
+    font-size: .72rem;
+    font-family: var(--mono);
+    background: rgba(0,170,255,.1);
+    border: 1px solid rgba(0,170,255,.25);
+    color: var(--accent2);
+    padding: .18rem .55rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background .15s;
+    user-select: none;
+  }
+  .var-chip:hover { background: rgba(0,170,255,.2); }
+  .var-hint { font-size: .72rem; color: var(--muted); margin-top: .45rem; }
+
+  /* ── Unsaved default banner ── */
+  .default-notice {
+    display: none;
+    align-items: center;
+    gap: .55rem;
+    background: rgba(240,160,48,.08);
+    border: 1px solid rgba(240,160,48,.3);
+    border-radius: 8px;
+    padding: .65rem 1rem;
+    margin-bottom: .9rem;
+    font-size: .78rem;
+    color: var(--warning);
+    line-height: 1.45;
+  }
+  .default-notice.show { display: flex; }
+  .default-notice-icon { font-size: 1rem; flex-shrink: 0; }
+  .default-notice strong { color: var(--text); }
+
+</style>
+</head>
+<body>
+
+<!-- Loading -->
+<div id="authLoading">
+  <img src="https://evoaiglobal.ai/images/favicon.ico" style="height:38px;opacity:.85;" />
+  <div class="spinner"></div>
+</div>
+
+<!-- Top bar -->
+<header class="topbar">
+  <a href="dashboard.html" class="topbar-back">
+    ← Back to Dashboard
+  </a>
+  <a href="dashboard.html" class="topbar-logo"><img src="/images/evoaiDesk.png" alt="evoAIDesk" style="height:32px;width:auto;display:block;"/></a>
+  <div class="topbar-user">
+    <div class="avatar" id="userInitials">--</div>
+    <span id="userName" style="color:var(--text);font-size:.82rem;"></span>
+  </div>
+</header>
+
+<!-- Main -->
+<main class="main">
+  <h1 class="page-title">Email Settings</h1>
+  <p class="page-subtitle">Connect your email account to send emails to your leads directly from evoAIDesk.</p>
+
+  <!-- Combined Email Settings Card -->
+  <div class="card">
+
+    <!-- Tenant row -->
+    <div class="config-row">
+      <span class="config-row-label">Tenant</span>
+      <span class="config-row-value" id="tenantName">—</span>
+    </div>
+
+    <div class="config-divider"></div>
+
+    <!-- Gmail info grid -->
+    <div class="gmail-grid">
+      <!-- Col 1: Status -->
+      <div class="gmail-col">
+        <span class="config-row-label">Gmail</span>
+        <span class="status-badge disconnected" id="gmailStatus" style="margin-left:0;margin-top:.4rem;">
+          <span class="status-dot"></span> Not connected
+        </span>
+      </div>
+      <!-- Col 2: Email (hidden when disconnected) -->
+      <div class="gmail-col" id="gmailEmailCol" style="display:none;">
+        <span class="config-row-label">Account</span>
+        <span class="connected-email" id="gmailConnectedEmail" style="margin-top:.4rem;display:block;"></span>
+      </div>
+      <!-- Col 3: Connected since (hidden when disconnected) -->
+      <div class="gmail-col" id="gmailConnectedAtRow" style="display:none;">
+        <span class="config-row-label">Connected Since</span>
+        <span class="config-row-value" id="gmailConnectedAt" style="font-size:.85rem;margin-top:.4rem;display:block;">—</span>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div style="margin-top:1.1rem;">
+      <button class="btn btn-google" id="btnConnectGmail" onclick="connectGmail()">
+        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google"/>
+        Sign in with Google to connect Gmail
+      </button>
+      <div class="btn-row" id="gmailActions" style="display:none;">
+        <button class="btn btn-outline" onclick="connectGmail()">Reconnect</button>
+        <button class="btn btn-danger" onclick="disconnectGmail()">Disconnect</button>
+      </div>
+    </div>
+
+  </div>
+
+
+
+  <!-- ── Email Templates Card ── -->
+  <div class="card" style="margin-top:1.5rem;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.1rem;">
+      <div>
+        <div style="font-size:1rem;font-weight:600;">Email Templates</div>
+        <div style="font-size:.78rem;color:var(--muted);margin-top:.2rem;">
+          Customize the HTML emails sent to your tenant clients.
+        </div>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tpl-tabs">
+      <button class="tpl-tab active" onclick="switchTab('intro')" id="tab-intro">📨 Intro Email</button>
+      <button class="tpl-tab" onclick="switchTab('proposal')" id="tab-proposal">📄 Proposal</button>
+    </div>
+
+    <!-- ── Intro Email Panel ── -->
+    <div class="tpl-panel active" id="panel-intro">
+      <div class="tpl-meta">
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Subject Line</label>
+          <input type="text" id="intro-subject" placeholder="e.g. Introduction — {{tenant_company}} × {{company}}" />
+        </div>
+      </div>
+      <div class="default-notice" id="default-notice-intro">
+        <span class="default-notice-icon">⚠️</span>
+        <span><strong>Sample template — not saved yet.</strong> Customise the content below to match your business, then click <strong>Save Intro Email</strong>.</span>
+      </div>
+      <label style="font-size:.75rem;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:.4rem;">Body (HTML)</label>
+      <div class="editor-toolbar" id="tb-intro">
+        <button class="tb-btn" onclick="fmt('intro','bold')" title="Bold"><b>B</b></button>
+        <button class="tb-btn" onclick="fmt('intro','italic')" title="Italic"><i>I</i></button>
+        <button class="tb-btn" onclick="fmt('intro','underline')" title="Underline"><u>U</u></button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn" onclick="fmt('intro','justifyLeft')" title="Align Left">⬅</button>
+        <button class="tb-btn" onclick="fmt('intro','justifyCenter')" title="Center">↔</button>
+        <button class="tb-btn" onclick="fmt('intro','justifyRight')" title="Align Right">➡</button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn" onclick="fmt('intro','insertUnorderedList')" title="Bullet list">• List</button>
+        <button class="tb-btn" onclick="fmt('intro','insertOrderedList')" title="Numbered list">1. List</button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn" onclick="insertLink('intro')" title="Insert link">🔗 Link</button>
+        <div class="tb-sep"></div>
+        <select onchange="fmt('intro','fontSize',this.value);this.selectedIndex=0;" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--muted);font-family:var(--font);font-size:.78rem;padding:.25rem .4rem;cursor:pointer;">
+          <option value="">Size</option>
+          <option value="1">Small</option>
+          <option value="3">Normal</option>
+          <option value="5">Large</option>
+          <option value="7">X-Large</option>
+        </select>
+        <select onchange="fmt('intro','foreColor',this.value);this.selectedIndex=0;" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--muted);font-family:var(--font);font-size:.78rem;padding:.25rem .4rem;cursor:pointer;">
+          <option value="">Color</option>
+          <option value="#e6edf3">Default</option>
+          <option value="#00e5a0">Green</option>
+          <option value="#00aaff">Blue</option>
+          <option value="#f0a030">Orange</option>
+          <option value="#ff4d6d">Red</option>
+        </select>
+        <div class="tb-sep"></div>
+        <button class="tb-btn" onclick="fmt('intro','removeFormat')" title="Clear formatting" style="font-size:.7rem;">✕ Clear</button>
+      </div>
+      <div class="editor-area" id="editor-intro" contenteditable="true" spellcheck="true"></div>
+      <div style="margin-top:.6rem;">
+        <div style="font-size:.72rem;color:var(--muted);margin-bottom:.3rem;">Click to insert — replaced with real values at send time:</div>
+        <div class="var-chips" id="vars-intro">
+          <span class="var-chip" onclick="insertVar('intro','{{name}}')">{{name}}</span>
+          <span class="var-chip" onclick="insertVar('intro','{{company}}')">{{company}}</span>
+          <span class="var-chip" onclick="insertVar('intro','{{tenant_company}}')">{{tenant_company}}</span>
+          <span class="var-chip" onclick="insertVar('intro','{{company_link}}')">{{company_link}}</span>
+        </div>
+      </div>
+      <div class="tpl-actions">
+        <span class="tpl-status" id="status-intro"></span>
+        <div style="display:flex;gap:.6rem;">
+          <button class="btn btn-outline" onclick="previewTemplate('intro')">👁 Preview</button>
+          <button class="btn btn-primary" onclick="saveTemplate('intro')">Save Intro Email</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Proposal Panel ── -->
+    <div class="tpl-panel" id="panel-proposal">
+      <div class="tpl-meta">
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Subject Line</label>
+          <input type="text" id="proposal-subject" placeholder="e.g. Proposal for {{company}} — {{tenant_company}}" />
+        </div>
+      </div>
+      <div class="default-notice" id="default-notice-proposal">
+        <span class="default-notice-icon">⚠️</span>
+        <span><strong>Sample template — not saved yet.</strong> Customise the content below to match your business, then click <strong>Save Proposal</strong>.</span>
+      </div>
+      <label style="font-size:.75rem;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:.4rem;">Body (HTML)</label>
+      <div class="editor-toolbar" id="tb-proposal">
+        <button class="tb-btn" onclick="fmt('proposal','bold')" title="Bold"><b>B</b></button>
+        <button class="tb-btn" onclick="fmt('proposal','italic')" title="Italic"><i>I</i></button>
+        <button class="tb-btn" onclick="fmt('proposal','underline')" title="Underline"><u>U</u></button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn" onclick="fmt('proposal','justifyLeft')" title="Align Left">⬅</button>
+        <button class="tb-btn" onclick="fmt('proposal','justifyCenter')" title="Center">↔</button>
+        <button class="tb-btn" onclick="fmt('proposal','justifyRight')" title="Align Right">➡</button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn" onclick="fmt('proposal','insertUnorderedList')" title="Bullet list">• List</button>
+        <button class="tb-btn" onclick="fmt('proposal','insertOrderedList')" title="Numbered list">1. List</button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn" onclick="insertLink('proposal')" title="Insert link">🔗 Link</button>
+        <div class="tb-sep"></div>
+        <select onchange="fmt('proposal','fontSize',this.value);this.selectedIndex=0;" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--muted);font-family:var(--font);font-size:.78rem;padding:.25rem .4rem;cursor:pointer;">
+          <option value="">Size</option>
+          <option value="1">Small</option>
+          <option value="3">Normal</option>
+          <option value="5">Large</option>
+          <option value="7">X-Large</option>
+        </select>
+        <select onchange="fmt('proposal','foreColor',this.value);this.selectedIndex=0;" style="background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--muted);font-family:var(--font);font-size:.78rem;padding:.25rem .4rem;cursor:pointer;">
+          <option value="">Color</option>
+          <option value="#e6edf3">Default</option>
+          <option value="#00e5a0">Green</option>
+          <option value="#00aaff">Blue</option>
+          <option value="#f0a030">Orange</option>
+          <option value="#ff4d6d">Red</option>
+        </select>
+        <div class="tb-sep"></div>
+        <button class="tb-btn" onclick="fmt('proposal','removeFormat')" title="Clear formatting" style="font-size:.7rem;">✕ Clear</button>
+      </div>
+      <div class="editor-area" id="editor-proposal" contenteditable="true" spellcheck="true"></div>
+      <div style="margin-top:.6rem;">
+        <div style="font-size:.72rem;color:var(--muted);margin-bottom:.3rem;">Click to insert — replaced with real values at send time:</div>
+        <div class="var-chips" id="vars-proposal">
+          <span class="var-chip" onclick="insertVar('proposal','{{name}}')">{{name}}</span>
+          <span class="var-chip" onclick="insertVar('proposal','{{company}}')">{{company}}</span>
+          <span class="var-chip" onclick="insertVar('proposal','{{tenant_company}}')">{{tenant_company}}</span>
+          <span class="var-chip" onclick="insertVar('proposal','{{company_link}}')">{{company_link}}</span>
+          <span class="var-chip" onclick="insertVar('proposal','{{proposal_link}}')">{{proposal_link}}</span>
+        </div>
+      </div>
+      <div class="tpl-actions">
+        <span class="tpl-status" id="status-proposal"></span>
+        <div style="display:flex;gap:.6rem;">
+          <button class="btn btn-outline" onclick="previewTemplate('proposal')">👁 Preview</button>
+          <button class="btn btn-primary" onclick="saveTemplate('proposal')">Save Proposal</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /card -->
+
+  <!-- Preview Modal -->
+  <div class="modal-overlay" id="previewModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span class="modal-title" id="previewModalTitle">Email Preview</span>
+        <button class="modal-close" onclick="closePreview()">×</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:.78rem;color:var(--muted);margin-bottom:.5rem;">
+          Subject: <span id="previewSubject" style="color:var(--text);font-weight:500;"></span>
+        </div>
+        <iframe class="preview-frame" id="previewFrame" sandbox="allow-same-origin"></iframe>
+      </div>
+    </div>
+  </div>
+
+
+</main>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- Firebase + OAuth Script -->
+<script type="module">
+  import { initializeApp }   from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
+  import { getAuth, onAuthStateChanged }
+                             from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
+  import { getFirestore, doc, getDoc, updateDoc }
+                             from "https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAkwOQZ15O8-_GB9LYNKaAUPe9NYgGUMw4",
+    authDomain: "evoaidesk.firebaseapp.com",
+    projectId: "evoaidesk",
+    storageBucket: "evoaidesk.firebasestorage.app",
+    messagingSenderId: "904271339352",
+    appId: "1:904271339352:web:06c777dd45b9051d8d8f2d",
+    measurementId: "G-VGZHC96EYC"
+  };
+
+  const app  = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db   = getFirestore(app);
+
+  let currentTenantId = null;
+
+  // ── Auth check ──
+  onAuthStateChanged(auth, async (user) => {
+    if (!user) {
+      window.location.replace("login.html");
+      return;
+    }
+
+    // Get tenant_id from users collection
+    try {
+      const userSnap = await getDoc(doc(db, 'users', user.email));
+      if (!userSnap.exists()) { showAccessDenied(); return; }
+      currentTenantId = userSnap.data().tenant_id || null;
+      if (!currentTenantId) { showAccessDenied(); return; }
+    } catch(e) {
+      console.error('Failed to fetch tenant:', e);
+      showAccessDenied();
+      return;
+    }
+
+    // Set user info in topbar
+    const name     = user.displayName || user.email.split('@')[0];
+    const initials = name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+    document.getElementById('userInitials').textContent = initials;
+    document.getElementById('userName').textContent = name;
+
+    // Handle OAuth callback FIRST — before loadSettings reads Firestore.
+    // If we just came back from Google, wait 1.5s for n8n→Firestore write to propagate,
+    // then reload settings so the UI reflects the newly saved gmail_connected state.
+    const oauthParam = new URLSearchParams(window.location.search).get('gmail');
+    if (oauthParam === 'connected') {
+      showToast('✅ Gmail connected successfully!', 'success');
+      window.history.replaceState({}, '', window.location.pathname);
+      await new Promise(r => setTimeout(r, 1500));
+      await loadSettings();
+      const connectedEmail = document.getElementById('gmailConnectedEmail')?.textContent?.trim() || null;
+      const connectedAt    = document.getElementById('gmailConnectedAt')?.textContent?.trim()    || null;
+      writeLog({
+        level: 'info', status: 'success',
+        module: 'email_settings', source: 'connectGmail',
+        message: 'Gmail connected via OAuth',
+        meta: {
+          action: 'gmail_connected',
+          gmail_email: connectedEmail,
+          gmail_connected_at: connectedAt,
+          tenant_id: currentTenantId
+        }
+      });
+    } else if (oauthParam === 'error') {
+      showToast('❌ Failed to connect Gmail. Please try again.', 'error');
+      window.history.replaceState({}, '', window.location.pathname);
+      await loadSettings();
+    } else {
+      await loadSettings();
+    }
+
+    // Hide loading
+    document.getElementById('authLoading').style.display = 'none';
+  });
+
+  // ── Load existing email settings from Firestore ──
+  async function loadSettings() {
+    try {
+      const snap = await getDoc(doc(db, 'tenants', currentTenantId));
+      if (!snap.exists()) return;
+      const data = snap.data();
+
+      // Tenant name (read-only)
+      if (data.name) {
+        document.getElementById('tenantName').textContent = data.name;
+      }
+
+      // Gmail OAuth status
+      if (data.gmail_connected && data.gmail_email) {
+        setGmailConnected(data.gmail_email, data.gmail_connected_at || null);
+      }
+
+      // Email templates
+      const INTRO_SAMPLE_HTML = `<p><strong>Hi {{name}},</strong></p><p><br></p><p>I'm reaching out from <strong>{{tenant_company}}</strong>. I came across <strong>{{company}}</strong> and wanted to reach out to introduce ourselves and explore whether there might be a good fit between our teams.</p><p><br></p><p>We work with businesses like yours to [briefly describe your core service or value — e.g. save time, reduce costs, grow revenue]. I’d love to learn more about your current priorities and share how we might be able to help.</p><p><br></p><p>Would you be open to a quick 20-minute call this week or next? Feel free to reply here or visit <a href="{{company_link}}">{{company_link}}</a> to find a time that works for you.</p><p><br></p><p>Looking forward to connecting,<br><strong>{{tenant_company}}</strong></p>`;
+      const INTRO_SAMPLE_SUBJECT = 'Introduction — {{tenant_company}} × {{company}}';
+
+      if (data.intro_email_html !== undefined) {
+        document.getElementById('editor-intro').innerHTML = data.intro_email_html || INTRO_SAMPLE_HTML;
+      } else {
+        document.getElementById('editor-intro').innerHTML = INTRO_SAMPLE_HTML;
+      }
+      if (data.intro_email_subject !== undefined) {
+        document.getElementById('intro-subject').value = data.intro_email_subject || INTRO_SAMPLE_SUBJECT;
+      } else {
+        document.getElementById('intro-subject').value = INTRO_SAMPLE_SUBJECT;
+      }
+
+      if (data.proposal_content_html !== undefined) {
+        document.getElementById('editor-proposal').innerHTML = data.proposal_content_html || `<p><strong>Proposal for {{company}}</strong></p><p><br></p><p><strong>Dear {{name}},</strong></p><p><br></p><p>Thank you for taking the time to speak with us. Following our conversation, we’ve put together a tailored proposal for <strong>{{company}}</strong> outlining how <strong>{{tenant_company}}</strong> can help you achieve your goals.</p><p><br></p><p><strong>What’s Included</strong></p><ul><li>[Service or Deliverable 1] — [One-line description]</li><li>[Service or Deliverable 2] — [One-line description]</li><li>[Service or Deliverable 3] — [One-line description]</li><li>[Ongoing support or reporting] — [One-line description]</li></ul><p><br></p><p><strong>Proposed Timeline</strong></p><ul><li>Kick-off &amp; onboarding: <strong>Week 1</strong></li><li>Delivery / go-live: <strong>Week 2–3</strong></li><li>First review &amp; check-in: <strong>Day 30</strong></li></ul><p><br></p><p>This proposal is valid for <strong>14 days</strong>. To move forward, simply reply to confirm or <a href="{{proposal_link}}">view the full proposal here</a>.</p><p><br></p><p>We look forward to working with you,<br><strong>{{tenant_company}}</strong></p>`;
+      } else {
+        document.getElementById('editor-proposal').innerHTML = `<p><strong>Proposal for {{company}}</strong></p><p><br></p><p><strong>Dear {{name}},</strong></p><p><br></p><p>Thank you for taking the time to speak with us. Following our conversation, we’ve put together a tailored proposal for <strong>{{company}}</strong> outlining how <strong>{{tenant_company}}</strong> can help you achieve your goals.</p><p><br></p><p><strong>What’s Included</strong></p><ul><li>[Service or Deliverable 1] — [One-line description]</li><li>[Service or Deliverable 2] — [One-line description]</li><li>[Service or Deliverable 3] — [One-line description]</li><li>[Ongoing support or reporting] — [One-line description]</li></ul><p><br></p><p><strong>Proposed Timeline</strong></p><ul><li>Kick-off &amp; onboarding: <strong>Week 1</strong></li><li>Delivery / go-live: <strong>Week 2–3</strong></li><li>First review &amp; check-in: <strong>Day 30</strong></li></ul><p><br></p><p>This proposal is valid for <strong>14 days</strong>. To move forward, simply reply to confirm or <a href="{{proposal_link}}">view the full proposal here</a>.</p><p><br></p><p>We look forward to working with you,<br><strong>{{tenant_company}}</strong></p>`;
+      }
+      const PROPOSAL_SAMPLE_SUBJECT = 'Proposal for {{company}} — {{tenant_company}}';
+      if (data.proposal_subject !== undefined) {
+        document.getElementById('proposal-subject').value = data.proposal_subject || PROPOSAL_SAMPLE_SUBJECT;
+      } else {
+        document.getElementById('proposal-subject').value = PROPOSAL_SAMPLE_SUBJECT;
+      }
+
+      // Mark templates as unsaved if loaded from defaults (not yet in Firestore)
+      checkAndMarkDefaults(data);
+
+    } catch(e) {
+      console.error('Failed to load settings:', e);
+    }
+  }
+
+  // ── Logging ──
+  const N8N_LOG_WRITE = 'https://n8n.evoaiglobal.ai/webhook/evoaidesk/log/write';
+  async function writeLog({ level = 'info', status = null, module, source, message, meta = {} }) {
+    try {
+      const user      = auth.currentUser;
+      const user_id   = user?.email || 'unknown';
+      const enriched  = { ...meta, updated_by: { name: user?.displayName || user_id, email: user_id } };
+      await fetch(N8N_LOG_WRITE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level, status, module, source, user_id,
+          tenant_id: currentTenantId, message, meta: JSON.stringify(enriched) })
+      });
+    } catch(e) { console.warn('[writeLog] failed:', e.message); }
+  }
+
+  // ── Connect Gmail via OAuth2 redirect flow ──
+  window.connectGmail = function() {
+    if (!currentTenantId) {
+      showToast('❌ Tenant not loaded. Please refresh and try again.', 'error');
+      return;
+    }
+    const clientId = '904271339352-djaepjp0voh1ihu8bi4v0ucb2mjmj10f.apps.googleusercontent.com';
+    const redirectUri = 'https://n8n.evoaiglobal.ai/webhook/gmail-oauth-callback';
+    const scope = 'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.email';
+
+    const url = 'https://accounts.google.com/o/oauth2/v2/auth' +
+      '?client_id=' + encodeURIComponent(clientId) +
+      '&redirect_uri=' + encodeURIComponent(redirectUri) +
+      '&response_type=code' +
+      '&scope=' + encodeURIComponent(scope) +
+      '&access_type=offline' +
+      '&prompt=consent' +
+      '&state=' + encodeURIComponent(currentTenantId);
+
+    window.location.href = url;
+  };
+
+  // handleOAuthCallback is now inlined inside onAuthStateChanged above
+
+  // ── Disconnect Gmail ──
+  window.disconnectGmail = async function() {
+    if (!confirm('Disconnect Gmail? Emails will stop sending until you reconnect.')) return;
+    try {
+      // Grab the refresh token before wiping it so we can revoke it with Google
+      const tenantSnap = await getDoc(doc(db, 'tenants', currentTenantId));
+      const refreshToken = tenantSnap.exists() ? (tenantSnap.data().gmail_refresh_token || '') : '';
+
+      // Fix 1 — clear ALL gmail fields including refresh_token so n8n cannot send
+      await updateDoc(doc(db, 'tenants', currentTenantId), {
+        gmail_connected:     false,
+        gmail_email:         '',
+        gmail_access_token:  '',
+        gmail_refresh_token: '',
+		gmail_connected_at:  '',
+      });
+
+      // Fix 2 — revoke the token at Google's end so it can't be reused even if cached
+      if (refreshToken) {
+        try {
+          await fetch('https://oauth2.googleapis.com/revoke?token=' + encodeURIComponent(refreshToken), {
+            method: 'POST',
+          });
+        } catch (revokeErr) {
+          // Revocation failure is non-critical — token is already cleared from Firestore
+          console.warn('[evoAIDesk] Token revocation failed (non-critical):', revokeErr);
+        }
+      }
+
+      setGmailDisconnected();
+      if (window._tenantGmailConnected !== undefined) window._tenantGmailConnected = false;
+      showToast('Gmail disconnected. Emails will no longer send.', 'success');
+      const disconnectedEmail = tenantSnap.exists() ? (tenantSnap.data().gmail_email || '') : '';
+      writeLog({
+        level: 'warn', status: 'success',
+        module: 'email_settings', source: 'disconnectGmail',
+        message: 'Gmail disconnected',
+        meta: { action: 'gmail_disconnected', gmail_email: disconnectedEmail, tenant_id: currentTenantId }
+      });
+    } catch(e) {
+      showToast('Failed to disconnect. Please try again.', 'error');
+      writeLog({
+        level: 'error', status: 'failure',
+        module: 'email_settings', source: 'disconnectGmail',
+        message: `Failed to disconnect Gmail: ${e.message}`,
+        meta: { action: 'gmail_disconnected', tenant_id: currentTenantId }
+      });
+    }
+  };
+
+  // ── UI helpers ──
+  function setGmailConnected(email, connectedAt) {
+    if (window._tenantGmailConnected !== undefined) window._tenantGmailConnected = true;
+    document.getElementById('gmailStatus').className = 'status-badge connected';
+    document.getElementById('gmailStatus').innerHTML = '<span class="status-dot"></span> Connected';
+    // Show email column
+    const emailEl = document.getElementById('gmailConnectedEmail');
+    emailEl.textContent = email;
+    document.getElementById('gmailEmailCol').style.display = '';
+    document.getElementById('btnConnectGmail').style.display = 'none';
+    document.getElementById('gmailActions').style.display    = 'flex';
+
+    // Show connected-since as date only (no time)
+    const atRow = document.getElementById('gmailConnectedAtRow');
+    const atEl  = document.getElementById('gmailConnectedAt');
+    if (connectedAt) {
+      let d;
+      if (typeof connectedAt.toDate === 'function') {
+        d = connectedAt.toDate();
+      } else {
+        d = new Date(connectedAt);
+      }
+      atEl.textContent = d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+      atRow.style.display = '';
+    } else {
+      atRow.style.display = 'none';
+    }
+  }
+
+  function setGmailDisconnected() {
+    document.getElementById('gmailStatus').className = 'status-badge disconnected';
+    document.getElementById('gmailStatus').innerHTML = '<span class="status-dot"></span> Not connected';
+    document.getElementById('gmailConnectedEmail').textContent = '';
+    document.getElementById('gmailEmailCol').style.display = 'none';
+    document.getElementById('btnConnectGmail').style.display = '';
+    document.getElementById('gmailActions').style.display    = 'none';
+    document.getElementById('gmailConnectedAtRow').style.display = 'none';
+    document.getElementById('gmailConnectedAt').textContent = '—';
+  }
+
+  function showAccessDenied() {
+    document.getElementById('authLoading').innerHTML = `
+      <img src="https://evoaiglobal.ai/images/favicon.ico" style="height:38px;opacity:.85;" />
+      <div style="color:#ff4d6d;font-size:.9rem;text-align:center;max-width:320px;">
+        <strong>Access Denied</strong><br>
+        <span style="color:#6b7fa3;font-size:.78rem;">Your account is not linked to a tenant. Please contact your administrator.</span>
+      </div>`;
+  }
+
+
+
+  // ══════════════════════════════════════════════
+  //  EMAIL TEMPLATES
+  // ══════════════════════════════════════════════
+
+  // Load templates from Firestore
+  async function loadTemplates() {
+    try {
+      const snap = await getDoc(doc(db, 'tenants', currentTenantId));
+      if (!snap.exists()) return;
+      const data = snap.data();
+
+      const INTRO_SAMPLE_HTML = `<p><strong>Hi {{name}},</strong></p><p><br></p><p>I'm reaching out from <strong>{{tenant_company}}</strong>. I came across <strong>{{company}}</strong> and wanted to reach out to introduce ourselves and explore whether there might be a good fit between our teams.</p><p><br></p><p>We work with businesses like yours to [briefly describe your core service or value — e.g. save time, reduce costs, grow revenue]. I’d love to learn more about your current priorities and share how we might be able to help.</p><p><br></p><p>Would you be open to a quick 20-minute call this week or next? Feel free to reply here or visit <a href="{{company_link}}">{{company_link}}</a> to find a time that works for you.</p><p><br></p><p>Looking forward to connecting,<br><strong>{{tenant_company}}</strong></p>`;
+      const INTRO_SAMPLE_SUBJECT = 'Introduction — {{tenant_company}} × {{company}}';
+
+      if (data.intro_email_html !== undefined) {
+        document.getElementById('editor-intro').innerHTML = data.intro_email_html || INTRO_SAMPLE_HTML;
+      } else {
+        document.getElementById('editor-intro').innerHTML = INTRO_SAMPLE_HTML;
+      }
+      if (data.intro_email_subject !== undefined) {
+        document.getElementById('intro-subject').value = data.intro_email_subject || INTRO_SAMPLE_SUBJECT;
+      } else {
+        document.getElementById('intro-subject').value = INTRO_SAMPLE_SUBJECT;
+      }
+
+
+      if (data.proposal_content_html !== undefined) {
+        document.getElementById('editor-proposal').innerHTML = data.proposal_content_html || `<p><strong>Proposal for {{company}}</strong></p><p><br></p><p><strong>Dear {{name}},</strong></p><p><br></p><p>Thank you for taking the time to speak with us. Following our conversation, we’ve put together a tailored proposal for <strong>{{company}}</strong> outlining how <strong>{{tenant_company}}</strong> can help you achieve your goals.</p><p><br></p><p><strong>What’s Included</strong></p><ul><li>[Service or Deliverable 1] — [One-line description]</li><li>[Service or Deliverable 2] — [One-line description]</li><li>[Service or Deliverable 3] — [One-line description]</li><li>[Ongoing support or reporting] — [One-line description]</li></ul><p><br></p><p><strong>Proposed Timeline</strong></p><ul><li>Kick-off &amp; onboarding: <strong>Week 1</strong></li><li>Delivery / go-live: <strong>Week 2–3</strong></li><li>First review &amp; check-in: <strong>Day 30</strong></li></ul><p><br></p><p>This proposal is valid for <strong>14 days</strong>. To move forward, simply reply to confirm or <a href="{{proposal_link}}">view the full proposal here</a>.</p><p><br></p><p>We look forward to working with you,<br><strong>{{tenant_company}}</strong></p>`;
+      } else {
+        document.getElementById('editor-proposal').innerHTML = `<p><strong>Proposal for {{company}}</strong></p><p><br></p><p><strong>Dear {{name}},</strong></p><p><br></p><p>Thank you for taking the time to speak with us. Following our conversation, we’ve put together a tailored proposal for <strong>{{company}}</strong> outlining how <strong>{{tenant_company}}</strong> can help you achieve your goals.</p><p><br></p><p><strong>What’s Included</strong></p><ul><li>[Service or Deliverable 1] — [One-line description]</li><li>[Service or Deliverable 2] — [One-line description]</li><li>[Service or Deliverable 3] — [One-line description]</li><li>[Ongoing support or reporting] — [One-line description]</li></ul><p><br></p><p><strong>Proposed Timeline</strong></p><ul><li>Kick-off &amp; onboarding: <strong>Week 1</strong></li><li>Delivery / go-live: <strong>Week 2–3</strong></li><li>First review &amp; check-in: <strong>Day 30</strong></li></ul><p><br></p><p>This proposal is valid for <strong>14 days</strong>. To move forward, simply reply to confirm or <a href="{{proposal_link}}">view the full proposal here</a>.</p><p><br></p><p>We look forward to working with you,<br><strong>{{tenant_company}}</strong></p>`;
+      }
+      const PROPOSAL_SAMPLE_SUBJECT = 'Proposal for {{company}} — {{tenant_company}}';
+      if (data.proposal_subject !== undefined) {
+        document.getElementById('proposal-subject').value = data.proposal_subject || PROPOSAL_SAMPLE_SUBJECT;
+      } else {
+        document.getElementById('proposal-subject').value = PROPOSAL_SAMPLE_SUBJECT;
+      }
+
+      // Mark templates as unsaved if loaded from defaults
+      checkAndMarkDefaults(data);
+
+    } catch(e) {
+      console.error('Failed to load templates:', e);
+    }
+  }
+
+  // Tab switcher
+  window.switchTab = function(name) {
+    ['intro','proposal'].forEach(t => {
+      document.getElementById('tab-' + t).classList.toggle('active', t === name);
+      document.getElementById('panel-' + t).classList.toggle('active', t === name);
+    });
+  };
+
+  // execCommand wrapper
+  window.fmt = function(editor, cmd, val) {
+    document.getElementById('editor-' + editor).focus();
+    document.execCommand(cmd, false, val || null);
+  };
+
+  // Insert hyperlink
+  window.insertLink = function(editor) {
+    const url = prompt('Enter URL:', 'https://');
+    if (!url) return;
+    document.getElementById('editor-' + editor).focus();
+    document.execCommand('createLink', false, url);
+  };
+
+  // Insert variable at cursor in contenteditable
+  window.insertVar = function(editor, varText) {
+    const el = document.getElementById('editor-' + editor);
+    el.focus();
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    const node = document.createTextNode(varText);
+    range.insertNode(node);
+    range.setStartAfter(node);
+    range.setEndAfter(node);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  };
+
+  // Save to Firestore
+  window.saveTemplate = async function(type) {
+    const statusEl = document.getElementById('status-' + type);
+    statusEl.textContent = 'Saving…';
+    statusEl.className = 'tpl-status saving';
+    try {
+      const updates = {};
+      if (type === 'intro') {
+        updates.intro_email_html    = document.getElementById('editor-intro').innerHTML;
+        updates.intro_email_subject = document.getElementById('intro-subject').value.trim();
+      } else {
+        updates.proposal_content_html = document.getElementById('editor-proposal').innerHTML;
+        updates.proposal_subject      = document.getElementById('proposal-subject').value.trim();
+      }
+      await updateDoc(doc(db, 'tenants', currentTenantId), updates);
+      statusEl.textContent = '✓ Saved';
+      statusEl.className = 'tpl-status saved';
+      setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'tpl-status'; }, 3000);
+      hideDefaultNotice(type);
+      showToast('✅ Template saved successfully!', 'success');
+      const subjectKey = type === 'intro' ? 'intro_email_subject' : 'proposal_subject';
+      writeLog({
+        level: 'info', status: 'success',
+        module: 'email_settings', source: 'saveTemplate',
+        message: `Email template saved: ${type}`,
+        meta: {
+          action: 'template_saved',
+          template_type: type,
+          subject: updates[subjectKey] || null,
+          tenant_id: currentTenantId
+        }
+      });
+    } catch(e) {
+      statusEl.textContent = '✗ Save failed';
+      statusEl.className = 'tpl-status error';
+      showToast('❌ Failed to save template.', 'error');
+      writeLog({
+        level: 'error', status: 'failure',
+        module: 'email_settings', source: 'saveTemplate',
+        message: `Failed to save email template: ${type} — ${e.message}`,
+        meta: {
+          action: 'template_saved',
+          template_type: type,
+          tenant_id: currentTenantId
+        }
+      });
+    }
+  };
+
+  // Preview modal
+  window.previewTemplate = function(type) {
+    const html   = document.getElementById('editor-' + type).innerHTML;
+    const subj   = document.getElementById(type + '-subject').value || '(no subject)';
+    const titles = { intro: 'Intro Email Preview', proposal: 'Proposal Preview' };
+
+    document.getElementById('previewModalTitle').textContent = titles[type];
+    document.getElementById('previewSubject').textContent = subj;
+
+    const frame = document.getElementById('previewFrame');
+    const doc2  = frame.contentDocument || frame.contentWindow.document;
+    doc2.open();
+    doc2.write(`<!DOCTYPE html><html><head>
+      <meta charset="UTF-8"/>
+      <style>
+        body { font-family: Arial, sans-serif; padding: 2rem; color: #1a1a1a; line-height: 1.6; max-width: 600px; margin: 0 auto; }
+        a { color: #0070f3; }
+      </style>
+    </head><body>${html || '<p style="color:#999">No content yet.</p>'}</body></html>`);
+    doc2.close();
+    frame.style.height = (doc2.body.scrollHeight + 48) + 'px';
+
+    document.getElementById('previewModal').classList.add('show');
+  };
+
+  window.closePreview = function() {
+    document.getElementById('previewModal').classList.remove('show');
+  };
+
+  // Close modal on overlay click
+  document.getElementById('previewModal').addEventListener('click', function(e) {
+    if (e.target === this) closePreview();
+  });
+
+
+  // ── Default-template notice ──
+  // Shows a warning banner when a template has never been saved to Firestore.
+  // Called after loading; dismissed permanently once the user saves.
+  function checkAndMarkDefaults(data) {
+    if (!data.intro_email_html)    showDefaultNotice('intro');
+    else                           hideDefaultNotice('intro');
+    if (!data.proposal_content_html) showDefaultNotice('proposal');
+    else                             hideDefaultNotice('proposal');
+  }
+  function showDefaultNotice(type) {
+    const el = document.getElementById('default-notice-' + type);
+    if (el) el.classList.add('show');
+  }
+  function hideDefaultNotice(type) {
+    const el = document.getElementById('default-notice-' + type);
+    if (el) el.classList.remove('show');
+  }
+
+  // ── Toast ──
+  window.showToast = function(msg, type='success') {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = `show ${type}`;
+    setTimeout(() => { t.className = ''; }, 3500);
+  };
+</script>
+</body>
+</html>

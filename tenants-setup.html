@@ -6,6 +6,8 @@
 <title>evoAI Desk — Tenant Setup</title>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <link rel="icon" type="image/x-icon" href="https://evoaiglobal.ai/images/favicon.ico">
+<link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet"/>
+<script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
 
 <!-- Firebase SDK -->
 <script type="module">
@@ -13,7 +15,7 @@
   import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
   import {
     getFirestore, collection, doc,
-    setDoc, getDoc, getDocs, deleteDoc,
+    setDoc, getDoc, getDocs, deleteDoc, addDoc,
     query, orderBy, where, serverTimestamp, Timestamp
   } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js";
 
@@ -31,6 +33,8 @@
   const auth = getAuth(app);
   const db   = getFirestore(app);
 
+  window._addDoc = addDoc;
+  window._Timestamp = Timestamp;
   window._auth = auth;
   window._db   = db;
   window._serverTimestamp = serverTimestamp;
@@ -49,8 +53,23 @@
     window.location.replace("login.html");
   };
 
-  onAuthStateChanged(auth, user => {
+  onAuthStateChanged(auth, async user => {
     if (!user) { window.location.replace("login.html"); return; }
+
+    // ISO 27001 A.9: Verify super-admin role from Firestore (same source of truth as login.html)
+    try {
+      const snap = await getDoc(doc(db, 'users', user.email));
+      if (!snap.exists() || snap.data().role !== 'super-admin') {
+        await signOut(auth);
+        window.location.replace("login.html");
+        return;
+      }
+    } catch(e) {
+      await signOut(auth);
+      window.location.replace("login.html");
+      return;
+    }
+
     document.getElementById('authLoading').style.display = 'none';
     document.getElementById('appShell').style.display    = 'contents';
     const name     = user.displayName || user.email.split('@')[0];
@@ -59,8 +78,24 @@
     document.getElementById('userName').textContent     = name;
     document.getElementById('userEmail').textContent    = user.email;
     window._currentUser = { name, email: user.email, initials };
+
+    // ISO 27001 A.9.4: 30-min inactivity timeout
+    let _idleTimer;
+    const resetIdle = () => {
+      clearTimeout(_idleTimer);
+      _idleTimer = setTimeout(async () => {
+        await signOut(auth);
+        window.location.replace("login.html");
+      }, 30 * 60 * 1000);
+    };
+    ['click','keydown','mousemove','scroll'].forEach(e =>
+      document.addEventListener(e, resetIdle, { passive: true })
+    );
+    resetIdle();
+
     loadTenants();
     loadUsers();
+    loadSchedules();
   });
 </script>
 
@@ -94,7 +129,7 @@
     background: var(--bg);
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
   }
-  #authLoading img { height: 38px; opacity: .85; }
+  #authLoading img { height: 38px; opacity: .85; display: block; margin: 0 auto; }
   .auth-spinner {
     width: 22px; height: 22px;
     border: 2px solid var(--border); border-top-color: var(--accent);
@@ -253,8 +288,27 @@
   .badge-pro        { background: rgba(0,184,255,.12); color: var(--accent2); border: 1px solid rgba(0,184,255,.25); }
   .badge-enterprise { background: rgba(192,132,252,.14); color: #c084fc; border: 1px solid rgba(192,132,252,.28); }
   .badge-admin   { background: rgba(255,183,48,.1); color: var(--warn); border: 1px solid rgba(255,183,48,.25); }
+  .badge-super-admin { background: rgba(139,92,246,.12); color: #8b5cf6; border: 1px solid rgba(139,92,246,.28);}
   .badge-manager { background: rgba(0,184,255,.1); color: var(--accent2); border: 1px solid rgba(0,184,255,.22); }
   .badge-agent   { background: rgba(107,127,163,.1); color: var(--muted); border: 1px solid var(--border); }
+
+  /* LOG LEVEL & STATUS BADGES */
+  .badge-info    { background: rgba(0,184,255,.1);  color: var(--accent2); border: 1px solid rgba(0,184,255,.22); }
+  .badge-warn    { background: rgba(255,183,48,.1); color: var(--warn);    border: 1px solid rgba(255,183,48,.25); }
+  .badge-error   { background: rgba(255,77,109,.12);color: var(--danger);  border: 1px solid rgba(255,77,109,.25); }
+  .badge-debug   { background: rgba(107,127,163,.1);color: var(--muted);   border: 1px solid var(--border); }
+  .badge-success { background: rgba(0,229,160,.12); color: var(--accent);  border: 1px solid rgba(0,229,160,.25); }
+  .badge-failure { background: rgba(255,77,109,.12);color: var(--danger);  border: 1px solid rgba(255,77,109,.25); }
+  .badge-partial { background: rgba(255,183,48,.1); color: var(--warn);    border: 1px solid rgba(255,183,48,.25); }
+
+  /* META EXPAND */
+  .meta-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: rgba(0,229,160,.05); border: 1px solid rgba(0,229,160,.15);
+    border-radius: 5px; padding: 2px 8px; font-family: var(--mono); font-size: .67rem;
+    color: var(--muted); cursor: pointer; transition: all .14s; white-space: nowrap;
+  }
+  .meta-pill:hover { border-color: var(--accent); color: var(--accent); }
 
   /* ROW ACTIONS */
   .row-actions { display: flex; gap: 5px; }
@@ -338,12 +392,19 @@
   }
   .field label .req { color: var(--accent); margin-left: 2px; }
   .field input, .field select { width: 100%; padding: 9px 11px; }
-  input[type="text"], input[type="email"], input[type="password"], select {
+  input[type="text"], input[type="email"], input[type="password"], input[type="tel"], select {
     background: var(--surface2); border: 1px solid var(--border);
     color: var(--text); font-family: var(--font); font-size: .82rem;
-    border-radius: 7px; outline: none; transition: border-color .18s;
+    border-radius: 7px; outline: none; transition: border-color .18s, box-shadow .18s;
   }
-  input[type="text"]:focus, input[type="email"]:focus, input[type="password"]:focus, select:focus { border-color: var(--accent); }
+  input[type="text"]:focus, input[type="email"]:focus, input[type="password"]:focus, input[type="tel"]:focus, select:focus {
+    border-color: rgba(0,184,255,.45);
+    box-shadow: 0 0 0 3px rgba(0,184,255,.08);
+  }
+  textarea:focus {
+    border-color: rgba(0,184,255,.45) !important;
+    box-shadow: 0 0 0 3px rgba(0,184,255,.08) !important;
+  }
   select { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7fa3' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 30px; }
   select option { background: var(--surface2); }
   .field-hint { font-size: .68rem; color: var(--muted); margin-top: 5px; font-family: var(--mono); }
@@ -393,6 +454,29 @@
   .info-banner svg { flex-shrink: 0; color: var(--accent2); margin-top: 1px; }
   .info-banner strong { color: var(--text); }
 
+  /* RICH TEXT EDITOR (Quill — themed to match dark UI) */
+  .rte-wrap { border: 1px solid var(--border); border-radius: 7px; overflow: hidden; transition: border-color .18s; }
+  .rte-wrap:focus-within { border-color: rgba(0,184,255,.45); box-shadow: 0 0 0 3px rgba(0,184,255,.08); }
+  .rte-wrap .ql-toolbar {
+    background: var(--surface2); border: none !important;
+    border-bottom: 1px solid var(--border) !important;
+    padding: 7px 10px;
+  }
+  .rte-wrap .ql-container { background: var(--surface2); border: none !important; font-family: var(--font); font-size: .82rem; }
+  .rte-wrap .ql-editor { min-height: 140px; max-height: 280px; overflow-y: auto; color: var(--text); padding: 10px 13px; line-height: 1.6; }
+  .rte-wrap .ql-editor.ql-blank::before { color: var(--muted); font-style: normal; font-size: .82rem; }
+  .rte-wrap .ql-editor p, .rte-wrap .ql-editor li { color: var(--text); }
+  .rte-wrap .ql-snow .ql-stroke { stroke: var(--muted); }
+  .rte-wrap .ql-snow .ql-fill  { fill: var(--muted); }
+  .rte-wrap .ql-snow .ql-picker { color: var(--muted); }
+  .rte-wrap .ql-snow .ql-picker-options { background: var(--surface2); border-color: var(--border); }
+  .rte-wrap .ql-toolbar button:hover .ql-stroke,
+  .rte-wrap .ql-toolbar button.ql-active .ql-stroke { stroke: var(--accent); }
+  .rte-wrap .ql-toolbar button:hover .ql-fill,
+  .rte-wrap .ql-toolbar button.ql-active .ql-fill  { fill: var(--accent); }
+  .rte-char-count { font-size: .66rem; color: var(--muted); font-family: var(--mono); text-align: right; margin-top: 4px; }
+  .rte-char-count.warn { color: var(--warn); }
+
   /* FILTER PILL */
   #filterPill {
     align-items:center; gap:8px; background:rgba(0,229,160,.07);
@@ -405,6 +489,26 @@
   .confirm-body { padding: 22px; font-size: .85rem; color: var(--muted); line-height: 1.6; }
   .confirm-body strong { color: var(--text); }
 
+  /* DATE INPUT WRAPPER */
+  .date-input-wrap { position: relative; display: flex; align-items: center; }
+  .date-input-wrap input[type="date"] {
+    width: 100%; padding: 9px 40px 9px 11px;
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--font); font-size: .82rem;
+    border-radius: 7px; outline: none; transition: border-color .18s;
+    appearance: none; -webkit-appearance: none;
+  }
+  .date-input-wrap input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0; width: 0; pointer-events: none; }
+  .date-input-wrap input[type="date"]:focus { border-color: var(--accent); }
+  .date-cal-btn {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    width: 26px; height: 26px; border-radius: 5px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--muted);
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: all .14s; padding: 0;
+  }
+  .date-cal-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(0,229,160,.08); }
+
   @media (max-width: 960px) {
     .shell { grid-template-columns: 1fr; }
     aside  { display: none; }
@@ -413,13 +517,85 @@
     .form-grid { grid-template-columns: 1fr; }
     .form-grid .full, .form-section-title { grid-column: 1; }
   }
+
+  /* PAGINATION */
+  .pagination-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 18px; border-top: 1px solid var(--border);
+    flex-wrap: wrap; gap: 8px;
+  }
+  .pagination-info { font-size: .72rem; color: var(--muted); font-family: var(--mono); }
+  .pagination-btns { display: flex; gap: 5px; }
+  .page-btn {
+    min-width: 30px; height: 28px; padding: 0 8px;
+    border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--muted);
+    font-family: var(--mono); font-size: .72rem;
+    cursor: pointer; transition: all .14s;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .page-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: rgba(0,229,160,.06); }
+  .page-btn.active { background: rgba(0,229,160,.12); border-color: rgba(0,229,160,.3); color: var(--accent); font-weight: 700; }
+  .page-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+  /* META MODAL */
+  .meta-modal { max-width: 500px; }
+  .meta-kv-list { display: flex; flex-direction: column; gap: 10px; }
+  .meta-json-block {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-family: var(--mono);
+    font-size: .73rem;
+    line-height: 1.65;
+    color: #c9d1d9;
+    white-space: pre;
+    overflow-x: auto;
+    max-height: 420px;
+    overflow-y: auto;
+  }
+  .meta-json-block .j-key    { color: #79c0ff; }
+  .meta-json-block .j-str    { color: #a5d6ff; }
+  .meta-json-block .j-num    { color: #f2cc60; }
+  .meta-json-block .j-bool   { color: #f0a05a; }
+  .meta-json-block .j-null   { color: #8b949e; font-style: italic; }
+  .meta-json-block .j-brace  { color: #8b949e; }
+  .meta-kv-row {
+    display: flex; align-items: flex-start; gap: 12px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px;
+  }
+  .meta-kv-key {
+    flex-shrink: 0; min-width: 110px; font-family: var(--mono);
+    font-size: .69rem; font-weight: 700; color: var(--accent);
+    text-transform: uppercase; letter-spacing: .06em; padding-top: 1px;
+  }
+  .meta-kv-val {
+    font-size: .78rem; color: var(--text); word-break: break-all; line-height: 1.5;
+  }
+  .meta-kv-val.is-bool  { color: #f0a05a; font-family: var(--mono); font-size: .74rem; }
+  .meta-kv-val.is-num   { color: #79c0ff; font-family: var(--mono); font-size: .74rem; }
+  .meta-kv-val.is-null  { color: var(--muted); font-family: var(--mono); font-size: .74rem; font-style: italic; }
+  .meta-kv-val.is-obj   { font-family: var(--mono); font-size: .71rem; color: var(--muted); white-space: pre-wrap; }
+  .meta-badge {
+    display: inline-flex; align-items: center;
+    background: rgba(0,229,160,.08); border: 1px solid rgba(0,229,160,.2);
+    border-radius: 4px; padding: 1px 7px; font-family: var(--mono);
+    font-size: .68rem; color: var(--accent); font-weight: 600;
+  }
+  .badge-new       { background: rgba(0,184,255,.12); color: var(--accent2); border: 1px solid rgba(0,184,255,.25); }
+  .badge-approved  { background: rgba(0,229,160,.12); color: var(--accent); border: 1px solid rgba(0,229,160,.25); }
+  .badge-rejected  { background: rgba(255,77,109,.12); color: var(--danger); border: 1px solid rgba(255,77,109,.25); }
+  .badge-expired   { background: rgba(107,127,163,.1); color: var(--muted); border: 1px solid var(--border); }
+  .badge-converted { background: rgba(192,132,252,.14); color: #c084fc; border: 1px solid rgba(192,132,252,.28); }
 </style>
 </head>
 <body>
 
 <!-- AUTH LOADING -->
 <div id="authLoading">
-  <img src="/images/evoaiDesk.png" alt="evoAI"/>
+  <img src="/images/evoaidesk.png" alt="evoAI"/>
   <div class="auth-spinner"></div>
   <p>Verifying session…</p>
 </div>
@@ -430,7 +606,7 @@
 <!-- NAV -->
 <nav>
   <a class="nav-logo" href="#">
-    <img src="/images/evoaiDesk.png" alt="evoAI" style="height:32px;width:auto;display:block;"/>
+    <img src="/images/evoaidesk.png" alt="evoAI" style="height:32px;width:auto;display:block;"/>
   </a>
   
   <div class="nav-right">
@@ -468,6 +644,21 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
           Users
           <span class="aside-count" id="cntUsers">—</span>
+        </a>
+        <a class="aside-item" href="#" onclick="switchTab('schedules');return false;" id="sideSchedulesLink">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          Schedules
+          <span class="aside-count" id="cntSchedules">—</span>
+        </a>
+        <a class="aside-item" href="#" onclick="switchTab('trials');return false;" id="sideTrialsLink">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          Trial Requests
+          <span class="aside-count" id="cntTrials">—</span>
+        </a>
+        <a class="aside-item" href="#" onclick="switchTab('logs');return false;" id="sideLogsLink">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          Logs
+          <span class="aside-count" id="cntLogs">—</span>
         </a>
         <a class="aside-item" href="#" onclick="filterActiveUsers();return false;" id="sideActiveUsersLink">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
@@ -516,6 +707,21 @@
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Users
         <span class="tab-count" id="tabCntUsers">—</span>
+      </button>
+      <button class="tab-btn" id="tabBtnSchedules" onclick="switchTab('schedules')">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        Schedules
+        <span class="tab-count" id="tabCntSchedules">—</span>
+      </button>
+      <button class="tab-btn" id="tabBtnTrials" onclick="switchTab('trials')">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        Trial Requests
+        <span class="tab-count" id="tabCntTrials">—</span>
+      </button>
+      <button class="tab-btn" id="tabBtnLogs" onclick="switchTab('logs')">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        Logs
+        <span class="tab-count" id="tabCntLogs">—</span>
       </button>
     </div>
 
@@ -580,12 +786,13 @@
               <th>Plan</th>
               <th>Status</th>
               <th>Users</th>
+              <th>Leads</th>
               <th>Created</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody id="tenantsTableBody">
-            <tr><td colspan="7"><div class="empty-state">
+            <tr><td colspan="8"><div class="empty-state">
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
               <p>No tenants yet</p><p class="empty-sub">Click "New Tenant" to create your first workspace.</p>
             </div></td></tr>
@@ -672,12 +879,312 @@
       </div>
     </div><!-- /panelUsers -->
 
+    <!-- ════════════════════════════════════ SCHEDULES TAB ═══════════════ -->
+    <div class="tab-panel" id="panelSchedules">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Scheduled Jobs</div>
+          <div class="page-sub">Manage recurring jobs across all tenants — reports, exports, notifications.</div>
+        </div>
+        <button class="pill-btn primary" onclick="openCreateScheduleModal()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Add Schedule
+        </button>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-label">Total Jobs</div>
+          <div class="stat-value" id="schStatTotal">—</div>
+          <div class="stat-sub">All scheduled jobs</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Active</div>
+          <div class="stat-value" id="schStatActive">—</div>
+          <div class="stat-sub">Currently enabled</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Reports</div>
+          <div class="stat-value" id="schStatReports">—</div>
+          <div class="stat-sub">Report type jobs</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Exports</div>
+          <div class="stat-value" id="schStatExports">—</div>
+          <div class="stat-sub">Export type jobs</div>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <div class="table-head-bar">
+          <div>
+            <h3>All Schedules</h3>
+            <p>Stored at <span style="font-family:var(--mono);color:var(--accent);font-size:.68rem;">/scheduled_jobs/{docId}</span></p>
+          </div>
+          <div class="table-head-bar-right" style="gap:8px;">
+            <select id="schTenantFilter" onchange="renderSchedulesTable()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:.76rem;border-radius:7px;padding:5px 28px 5px 10px;outline:none;cursor:pointer;appearance:none;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7fa3' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 8px center;">
+              <option value="">All Tenants</option>
+            </select>
+            <select id="schTypeFilter" onchange="renderSchedulesTable()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:.76rem;border-radius:7px;padding:5px 28px 5px 10px;outline:none;cursor:pointer;appearance:none;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7fa3' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 8px center;">
+              <option value="">All Types</option>
+              <option value="report">Report</option>
+              <option value="export">Export</option>
+              <option value="notification">Notification</option>
+            </select>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Job Name</th>
+              <th>Tenant</th>
+              <th>Type</th>
+              <th>Frequency</th>
+              <th>Next Run</th>
+              <th>Recipient</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="schedulesTableBody">
+            <tr><td colspan="8"><div class="empty-state">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <p>No scheduled jobs yet</p><p class="empty-sub">Click "Add Schedule" to create the first job.</p>
+            </div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /panelSchedules -->
+
+    <!-- ════════════════════════════════════ TRIAL REQUESTS TAB ════════════ -->
+    <div class="tab-panel" id="panelTrials">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Trial Requests</div>
+          <div class="page-sub">Manage incoming trial requests</div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="pill-btn outline" onclick="loadTrials(true)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
+            Refresh
+          </button>
+          <button class="pill-btn outline" onclick="downloadTrialsCSV()" id="downloadTrialsBtn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download CSV
+          </button>
+          <button class="pill-btn primary" onclick="openTrialModal(null)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Add Request
+          </button>
+        </div>
+      </div>
+
+      <!-- Trial stats -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-label">Total</div>
+          <div class="stat-value" id="trialStatTotal">—</div>
+          <div class="stat-sub">All trial requests</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">New</div>
+          <div class="stat-value" style="color:var(--accent2);" id="trialStatNew">—</div>
+          <div class="stat-sub">Awaiting review</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Approved</div>
+          <div class="stat-value" style="color:var(--accent);" id="trialStatApproved">—</div>
+          <div class="stat-sub">Active trials</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Rejected</div>
+          <div class="stat-value" style="color:var(--danger);" id="trialStatRejected">—</div>
+          <div class="stat-sub">Declined requests</div>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <div class="table-head-bar">
+          <div>
+            <h3>Trial Requests</h3>
+          </div>
+          <div class="table-head-bar-right" style="gap:8px;flex-wrap:wrap;">
+            <!-- Status filter -->
+            <select id="trialStatusFilter" onchange="resetTrialsPage()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:.76rem;border-radius:7px;padding:5px 28px 5px 10px;outline:none;cursor:pointer;appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7fa3' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 8px center;">
+              <option value="">All Statuses</option>
+              <option value="new">New</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+              <option value="expired">Expired</option>
+              <option value="converted">Converted</option>
+            </select>
+            <!-- Search -->
+            <div class="search-wrap">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input class="search-input" id="trialSearch" placeholder="Search name, email, company…" oninput="resetTrialsPage()" style="width:220px;"/>
+            </div>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Submitted</th>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Company</th>
+              <th>Team Size</th>
+              <th>Status</th>
+              <th>Trial Period</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="trialsTableBody">
+            <tr><td colspan="8"><div class="empty-state">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+              <p>No trial requests loaded</p><p class="empty-sub">Click "Refresh" to fetch from Neon.</p>
+            </div></td></tr>
+          </tbody>
+        </table>
+        <div class="pagination-bar" id="trialsPagBar" style="display:none;">
+          <span class="pagination-info" id="trialsPagInfo"></span>
+          <div class="pagination-btns" id="trialsPagBtns"></div>
+        </div>
+      </div>
+    </div><!-- /panelTrials -->
+
+    <!-- ════════════════════════════════════ LOGS TAB ════════════════════ -->
+    <div class="tab-panel" id="panelLogs">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Activity Logs</div>
+          <div class="page-sub">All actions across tenants, users, and schedules — pulled from Neon.</div>
+        </div>
+        <button class="pill-btn outline" onclick="loadLogs(true)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
+          Refresh
+        </button>
+      </div>
+
+      <!-- Log stats -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-label">Total</div>
+          <div class="stat-value" id="logStatTotal">—</div>
+          <div class="stat-sub">All log entries</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Errors</div>
+          <div class="stat-value" style="color:var(--danger);" id="logStatErrors">—</div>
+          <div class="stat-sub">Level: error</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Failures</div>
+          <div class="stat-value" style="color:var(--warn);" id="logStatFailures">—</div>
+          <div class="stat-sub">Status: failure</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Success</div>
+          <div class="stat-value" style="color:var(--accent);" id="logStatSuccess">—</div>
+          <div class="stat-sub">Status: success</div>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <div class="table-head-bar">
+          <div>
+            <h3>Log Entries</h3>
+            <p>Latest 200 entries from <span style="font-family:var(--mono);color:var(--accent);font-size:.68rem;">logs</span> table</p>
+          </div>
+          <div class="table-head-bar-right" style="gap:8px;flex-wrap:wrap;">
+            <!-- Level filter -->
+            <select id="logLevelFilter" onchange="resetLogsPage()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:.76rem;border-radius:7px;padding:5px 28px 5px 10px;outline:none;cursor:pointer;appearance:none;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7fa3' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 8px center;">
+              <option value="">All Levels</option>
+              <option value="info">Info</option>
+              <option value="warn">Warn</option>
+              <option value="error">Error</option>
+              <option value="debug">Debug</option>
+            </select>
+            <!-- Status filter -->
+            <select id="logStatusFilter" onchange="resetLogsPage()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:.76rem;border-radius:7px;padding:5px 28px 5px 10px;outline:none;cursor:pointer;appearance:none;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7fa3' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 8px center;">
+              <option value="">All Statuses</option>
+              <option value="success">Success</option>
+              <option value="failure">Failure</option>
+              <option value="partial">Partial</option>
+            </select>
+            <!-- Module filter -->
+            <select id="logModuleFilter" onchange="resetLogsPage()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:.76rem;border-radius:7px;padding:5px 28px 5px 10px;outline:none;cursor:pointer;appearance:none;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7fa3' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 8px center;">
+              <option value="">All Modules</option>
+            </select>
+            <!-- Tenant filter -->
+            <select id="logTenantFilter" onchange="resetLogsPage()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:.76rem;border-radius:7px;padding:5px 28px 5px 10px;outline:none;cursor:pointer;appearance:none;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7fa3' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 8px center;">
+              <option value="">All Tenants</option>
+            </select>
+            <!-- Search -->
+            <div class="search-wrap">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input class="search-input" id="logSearch" placeholder="Search message…" oninput="resetLogsPage()"/>
+            </div>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Level</th>
+              <th>Tenant</th>
+              <th>Status</th>
+              <th>Module</th>
+              <th>Source</th>
+              <th>User</th>
+              <th>Message</th>
+              <th>Meta</th>
+            </tr>
+          </thead>
+          <tbody id="logsTableBody">
+            <tr><td colspan="9"><div class="empty-state">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              <p>No logs loaded</p><p class="empty-sub">Click the Logs tab or Refresh to fetch entries.</p>
+            </div></td></tr>
+          </tbody>
+        </table>
+        <div class="pagination-bar" id="logsPagBar" style="display:none;">
+          <span class="pagination-info" id="logsPagInfo"></span>
+          <div class="pagination-btns" id="logsPagBtns"></div>
+        </div>
+      </div>
+    </div><!-- /panelLogs -->
+
   </main>
 </div>
 </div><!-- /#appShell -->
 
 <!-- TOAST -->
 <div id="toast"><span class="toast-dot"></span><span id="toastMsg"></span></div>
+
+<!-- META MODAL -->
+<div class="overlay" id="metaModal">
+  <div class="modal meta-modal">
+    <div class="modal-head">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent)"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <div class="modal-title">Log Meta</div>
+      </div>
+      <button class="modal-close" onclick="closeMetaModal()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="meta-kv-list" id="metaKvList"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" id="metaCopyBtn" onclick="copyMetaJson()" style="display:flex;align-items:center;gap:6px;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        Copy JSON
+      </button>
+      <button class="btn btn-outline" onclick="closeMetaModal()">Close</button>
+    </div>
+  </div>
+</div>
 
 <!-- ══════════════════════════════ TENANT MODAL ══════════════════════════ -->
 <div class="overlay" id="tenantModal">
@@ -783,26 +1290,67 @@
           <div class="field-hint">City / Country of the tenant</div>
         </div>
 
-        <!-- ── NEW: Email / SMTP section ── -->
-        <div class="form-section-title">Email &amp; SMTP</div>
+        <!-- ── Gmail Status (read-only) ── -->
+        <div class="form-section-title">Gmail Status</div>
         <div class="field full">
-          <label>From Email</label>
-          <input type="email" id="fFromEmail" placeholder="e.g. noreply@company.ai" autocomplete="off"/>
-          <div class="field-hint">Maps to <span style="color:var(--accent);">from_email</span> — used as the sender address for outgoing emails</div>
-        </div>
-        <div class="field full">
-          <label>SMTP App Password</label>
-          <div class="pw-wrap">
-            <input type="password" id="fSmtpAppPassword" placeholder="e.g. xxxx xxxx xxxx xxxx" autocomplete="new-password"/>
-            <button type="button" class="pw-toggle" onclick="toggleSmtpPw(this)" title="Show / hide password">
-              <svg id="smtpEyeIcon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                <circle cx="12" cy="12" r="3"/>
-              </svg>
-            </button>
+          <label>Connection Status</label>
+          <div id="fGmailStatusBadge" style="display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:20px;font-size:.74rem;font-weight:600;background:rgba(107,127,163,.1);border:1px solid var(--border);color:var(--muted);">
+            <span style="width:7px;height:7px;border-radius:50%;background:currentColor;flex-shrink:0;"></span>
+            <span id="fGmailStatusText">Not connected</span>
           </div>
-          <div class="field-hint">Maps to <span style="color:var(--accent);">smtp_app_password</span> — use a Google / provider app password, not your account password</div>
+          <div class="field-hint">Reflects <span style="color:var(--accent);">gmail_connected</span> — toggled by OAuth flow in Email Settings</div>
         </div>
+        <div class="field">
+          <label>Gmail Account</label>
+          <input type="text" id="fGmailEmail" readonly placeholder="—" autocomplete="off"
+            style="background:var(--bg);color:var(--muted);cursor:default;"/>
+          <div class="field-hint">Maps to <span style="color:var(--accent);">gmail_email</span></div>
+        </div>
+        <div class="field">
+          <label>Connected At</label>
+          <input type="text" id="fGmailConnectedAt" readonly placeholder="—" autocomplete="off"
+            style="background:var(--bg);color:var(--muted);cursor:default;"/>
+          <div class="field-hint">Maps to <span style="color:var(--accent);">gmail_connected_at</span></div>
+        </div>
+        <div class="field full">
+          <label>Refresh Token</label>
+          <input type="text" id="fGmailRefreshToken" readonly placeholder="—" autocomplete="off"
+            style="background:var(--bg);color:var(--muted);cursor:default;font-family:var(--mono);font-size:.72rem;"/>
+          <div class="field-hint">Maps to <span style="color:var(--accent);">gmail_refresh_token</span> — managed by OAuth; never edit manually</div>
+        </div>
+
+        <!-- ── Intro Email Content ── -->
+        <div class="form-section-title">Intro Email Content</div>
+        <div class="field full">
+          <label>Intro Email Subject</label>
+          <input type="text" id="fIntroSubject" placeholder="e.g. Introduction — {{company}}" autocomplete="off"/>
+          <div class="field-hint">Maps to <span style="color:var(--accent);">intro_email_subject</span></div>
+        </div>
+        <div class="field full">
+          <label>Intro / Welcome Email Body</label>
+          <div class="rte-wrap">
+            <div id="fIntroEmailEditor"></div>
+          </div>
+          <div class="rte-char-count" id="fIntroEmailCount">0 chars</div>
+          <div class="field-hint">Maps to <span style="color:var(--accent);">intro_email_html</span> — rich HTML injected as the body of the tenant's welcome email</div>
+        </div>
+
+        <!-- ── Proposal Content ── -->
+        <div class="form-section-title">Proposal Content</div>
+        <div class="field full">
+          <label>Proposal Subject</label>
+          <input type="text" id="fProposalSubject" placeholder="e.g. Proposal for {{company}}" autocomplete="off"/>
+          <div class="field-hint">Maps to <span style="color:var(--accent);">proposal_subject</span></div>
+        </div>
+        <div class="field full">
+          <label>Proposal Template Body</label>
+          <div class="rte-wrap">
+            <div id="fProposalEditor"></div>
+          </div>
+          <div class="rte-char-count" id="fProposalCount">0 chars</div>
+          <div class="field-hint">Maps to <span style="color:var(--accent);">proposal_content_html</span> — rich HTML used as the proposal template for this tenant. Use <span style="color:var(--accent2);">{{name}}</span>, <span style="color:var(--accent2);">{{company}}</span> as merge tags</div>
+        </div>
+
       </div>
     </div>
     <div class="modal-foot">
@@ -843,10 +1391,11 @@
         </div>
         <div class="field">
           <label>Role <span class="req">*</span></label>
-          <select id="uRole">
+          <select id="uRole">		    
             <option value="admin">Admin</option>
-            <option value="manager">Manager</option>
-            <option value="agent">Agent</option>
+			<option value="agent">Agent</option>
+            <option value="manager">Manager</option>            
+			<option value="super-admin">Super-Admin</option>
           </select>
         </div>
         <div class="field">
@@ -863,6 +1412,14 @@
           </select>
           <div class="field-hint">Maps to <span style="color:var(--accent);">tenant_id</span> field in Firestore</div>
         </div>
+
+        <div class="form-section-title">Integrations</div>
+        <div class="field full">
+          <label>Telegram User ID</label>
+          <input type="text" id="uTelegramUserId" placeholder="e.g. 8494253461" autocomplete="off"
+            oninput="this.value=this.value.replace(/[^0-9]/g,'')"/>
+          <div class="field-hint">Maps to <span style="color:var(--accent);">telegram_user_id</span> in Firestore — numeric ID from Telegram</div>
+        </div>
       </div>
     </div>
     <div class="modal-foot">
@@ -870,6 +1427,121 @@
       <button class="btn btn-primary" id="saveUserBtn" onclick="saveUser()">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
         Save User
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════ TRIAL REQUEST MODAL ═══════════════════ -->
+<div class="overlay" id="trialModal">
+  <div class="modal" style="max-width:680px;">
+    <div class="modal-head">
+      <div class="modal-title" id="modalTrialTitle">Trial Request</div>
+      <button class="modal-close" onclick="closeTrialModal()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <!-- Inline error message box (login.html pattern) -->
+      <div id="trialModalMsg" style="display:none;padding:11px 14px;border-radius:8px;font-size:.82rem;background:rgba(255,77,109,.08);border:1px solid rgba(255,77,109,.22);color:#ff8099;margin-bottom:16px;line-height:1.5;"></div>
+
+      <!-- Approved-mode notice — shown only when editing an approved trial -->
+      <div id="trialApprovedBanner" style="display:none;align-items:center;gap:10px;padding:11px 14px;border-radius:8px;font-size:.81rem;background:rgba(255,183,48,.07);border:1px solid rgba(255,183,48,.22);color:var(--warn);margin-bottom:16px;line-height:1.5;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span>This trial is <strong>Approved</strong>. All fields are locked — you can only update the status to <strong>Expired</strong> or <strong>Converted</strong>.</span>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-section-title">Applicant Details</div>
+        <div class="field">
+          <label>Full Name <span class="req">*</span></label>
+          <input type="text" id="trName" placeholder="e.g. Jane Smith" autocomplete="off"
+            oninput="trClearError(this,'trialModalMsg')"/>
+        </div>
+        <div class="field">
+          <label>Email <span class="req">*</span></label>
+          <input type="email" id="trEmail" placeholder="e.g. jane@company.com" autocomplete="off"
+            oninput="trClearError(this,'trialModalMsg')"/>
+          <div class="field-hint">Used to sign in via Google — must be a valid work email</div>
+        </div>
+        <div class="field">
+          <label>Company <span class="req">*</span></label>
+          <input type="text" id="trCompany" placeholder="e.g. Acme Corp" autocomplete="off"
+            oninput="trClearError(this,'trialModalMsg')"/>
+        </div>
+        <div class="field">
+          <label>Phone / WhatsApp</label>
+          <input type="tel" id="trPhone" placeholder="e.g. +91 98765 43210" autocomplete="tel"
+            oninput="trClearError(this,'trialModalMsg')"/>
+        </div>
+        <div class="field">
+          <label>Team Size <span class="req">*</span></label>
+          <select id="trTeamSize" oninput="trClearError(this,'trialModalMsg')" onchange="trClearError(this,'trialModalMsg')">
+            <option value="" disabled selected>— Select team size —</option>
+            <option value="1-5">1 – 5 people</option>
+            <option value="6-20">6 – 20 people</option>
+            <option value="21-50">21 – 50 people</option>
+            <option value="51-200">51 – 200 people</option>
+            <option value="200+">200+ people</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Status</label>
+          <select id="trStatus">
+            <option value="new">New</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+            <option value="expired">Expired</option>
+            <option value="converted">Converted</option>
+          </select>
+        </div>
+        <div class="field full">
+          <label>What are you looking to solve? <span class="req">*</span></label>
+          <textarea id="trUseCase" rows="3" placeholder="e.g. We want to manage our sales pipeline, automate follow-ups, and track opportunities…"
+            style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:.82rem;border-radius:7px;padding:9px 11px;outline:none;resize:vertical;width:100%;transition:border-color .18s, box-shadow .18s;"
+            oninput="trClearError(this,'trialModalMsg')"></textarea>
+        </div>
+
+        <div class="form-section-title">Trial Period</div>
+        <div class="field">
+          <label>Trial Start Date</label>
+          <div class="date-input-wrap">
+            <input type="date" id="trStartDate" onchange="(function(){const s=document.getElementById('trStartDate').value;if(s){trClearError(document.getElementById('trStartDate'),'trialModalMsg');const d=new Date(s);d.setDate(d.getDate()+30);document.getElementById('trEndDate').value=d.toISOString().slice(0,10);trClearError(document.getElementById('trEndDate'),'trialModalMsg');}})()"/>
+            <button type="button" class="date-cal-btn" onclick="document.getElementById('trStartDate').showPicker()" title="Open calendar">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Trial End Date</label>
+          <div class="date-input-wrap">
+            <input type="date" id="trEndDate" onchange="if(this.value) trClearError(this,'trialModalMsg')"/>
+            <button type="button" class="date-cal-btn" onclick="document.getElementById('trEndDate').showPicker()" title="Open calendar">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="field full">
+          <label>Source</label>
+          <input type="text" id="trSource" value="evoAIDesk Tenant Manager" autocomplete="off"/>
+        </div>
+
+        <div class="form-section-title">Notes</div>
+        <div class="field full">
+          <label>Comments</label>
+          <textarea id="trComments" rows="3" placeholder="Internal notes, follow-up reminders…"
+            style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:.82rem;border-radius:7px;padding:9px 11px;outline:none;resize:vertical;width:100%;transition:border-color .18s, box-shadow .18s;"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" onclick="closeTrialModal()">Cancel</button>
+      <button class="btn btn-primary" id="saveTrialBtn" onclick="saveTrial()">
+        <span id="saveTrialBtnLabel" style="display:flex;align-items:center;gap:6px;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+          Save Request
+        </span>
+        <span id="saveTrialBtnSpinner" style="display:none;" class="auth-spinner" style="width:14px;height:14px;border-color:rgba(8,12,16,.3);border-top-color:#080c10;"></span>
       </button>
     </div>
   </div>
@@ -892,6 +1564,123 @@
   </div>
 </div>
 
+<!-- ══════════════════════════════ VIEW TRIAL MODAL ══════════════════════ -->
+<div class="overlay" id="viewTrialModal">
+  <div class="modal meta-modal" style="max-width:540px;">
+    <div class="modal-head">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent)"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        <div class="modal-title">Trial Request Details</div>
+      </div>
+      <button class="modal-close" onclick="closeViewTrialModal()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="meta-kv-list" id="viewTrialKvList"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" onclick="closeViewTrialModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ SCHEDULE MODAL ════════════════════════ -->
+<div class="overlay" id="scheduleModal">
+  <div class="modal" style="max-width:620px;">
+    <div class="modal-head">
+      <div class="modal-title" id="modalScheduleTitle">Add Schedule</div>
+      <button class="modal-close" onclick="closeScheduleModal()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-section-title">Job Details</div>
+        <div class="field full">
+          <label>Tenant <span class="req">*</span></label>
+          <select id="schTenantId">
+            <option value="">— Select tenant —</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Job Type <span class="req">*</span></label>
+          <select id="schJobType">
+            <option value="report">Report</option>
+            <option value="export">Export</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Job Name <span class="req">*</span></label>
+          <input type="text" id="schJobName" placeholder="e.g. pipeline_summary" autocomplete="off"/>
+          <div class="field-hint">Lowercase, underscores OK</div>
+        </div>
+
+        <div class="form-section-title">Schedule</div>
+        <div class="field">
+          <label>Frequency <span class="req">*</span></label>
+          <select id="schFrequency" onchange="onFrequencyChange()">
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+        </div>
+        <div class="field" id="schRunDayWrap">
+          <label id="schRunDayLabel">Run Day <span class="req">*</span></label>
+          <select id="schRunDay">
+            <option value="0">Sunday</option>
+            <option value="1">Monday</option>
+            <option value="2">Tuesday</option>
+            <option value="3">Wednesday</option>
+            <option value="4">Thursday</option>
+            <option value="5">Friday</option>
+            <option value="6">Saturday</option>
+          </select>
+          <div class="field-hint" id="schRunDayHint">0 = Sunday … 6 = Saturday</div>
+        </div>
+        <div class="field full">
+          <label>Next Run Date <span class="req">*</span></label>
+          <div class="date-input-wrap">
+            <input type="date" id="schNextRunDate"/>
+            <button type="button" class="date-cal-btn" onclick="document.getElementById('schNextRunDate').showPicker()" title="Open calendar">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            </button>
+          </div>
+          <div class="field-hint" id="schNextRunDateHint">Auto-suggested from frequency &amp; run day — editable</div>
+        </div>
+
+
+        <div class="form-section-title">Recipient</div>
+        <div class="field full">
+          <label>Recipient Name <span class="req">*</span></label>
+          <input type="text" id="schRecipientName" placeholder="e.g. John Doe" autocomplete="off" required oninput="this.style.borderColor=this.value.trim()?'var(--accent)':'var(--danger)';"/>
+        </div>
+        <div class="field full">
+          <label>Recipient Email <span class="req">*</span></label>
+          <input type="text" id="schRecipientEmail" placeholder="e.g. ceo@company.com" autocomplete="off" required
+            oninput="const v=this.value.trim(); this.style.borderColor=v&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)?'var(--danger)':v?'var(--accent)':'';"/>
+        </div>
+
+        <div class="form-section-title">Status</div>
+        <div class="field">
+          <label>Active</label>
+          <select id="schIsActive">
+            <option value="true">Yes — enabled</option>
+            <option value="false">No — disabled</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" onclick="closeScheduleModal()">Cancel</button>
+      <button class="btn btn-primary" id="saveScheduleBtn" onclick="saveSchedule()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        Save Schedule
+      </button>
+    </div>
+  </div>
+</div>
+
 <script>
   /* ── STATE ── */
   let _tenants  = [];
@@ -901,28 +1690,215 @@
   let _filter   = 'all';
   let _activeTab = 'tenants';
 
-  /* ══════════════ SMTP PASSWORD TOGGLE ══════════════ */
-  function toggleSmtpPw(btn) {
-    const input = document.getElementById('fSmtpAppPassword');
-    const isHidden = input.type === 'password';
-    input.type = isHidden ? 'text' : 'password';
-    btn.querySelector('svg').innerHTML = isHidden
-      ? `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>`
-      : `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`;
+  /* ── Trial Requests State ── */
+  let _trials        = [];
+  let _trialsLoaded  = false;
+  let _trialsLoading = false;
+  let _trialsPage    = 1;
+  let _editTrialId   = null;
+  const TRIALS_PER_PAGE = 20;
+
+  /* ══════════════ N8N WEBHOOK CONFIG ══════════════
+     All Neon queries are proxied through n8n webhooks to avoid CORS.
+     Paste your webhook URLs below after creating them in n8n.
+  ═════════════════════════════════════════════════ */
+  const N8N_LOG_WRITE   = 'https://n8n.evoaiglobal.ai/webhook/evoaidesk/log/write'; // POST
+  const N8N_LOG_READ    = 'https://n8n.evoaiglobal.ai/webhook/evoaidesk/log/read';  // GET
+  const N8N_ALL_LEADS_COUNT = 'https://evoaidesk-tenant-setup-api.evoaiglobal-system.workers.dev/api/all-tenants-leads-count';
+
+  /* ── Trial Requests (Neon via n8n) ── */
+  const N8N_TRIAL_READ   = 'https://n8n.evoaiglobal.ai/webhook/evoaidesk/trials/read';   // GET
+  
+  const N8N_TRIAL_WRITE  = 'https://n8n.evoaiglobal.ai/webhook/evoaidesk/trials/manage';
+  const N8N_TRIAL_UPDATE  = 'https://n8n.evoaiglobal.ai/webhook/evoaidesk/trials/manage';
+  const N8N_TRIAL_DELETE  = 'https://n8n.evoaiglobal.ai/webhook/evoaidesk/trials/manage';
+  
+  //const N8N_TRIAL_WRITE  = 'https://n8n.evoaiglobal.ai/webhook/evoaidesk/trials/write';  // POST
+  //const N8N_TRIAL_UPDATE = 'https://n8n.evoaiglobal.ai/webhook/evoaidesk/trials/update'; // POST
+  //const N8N_TRIAL_DELETE = 'https://n8n.evoaiglobal.ai/webhook/evoaidesk/trials/delete'; // POST
+
+  // Single flat map populated by one bulk call: { tenantSlug: count }
+  let _leadsCounts  = null;  // null = not yet fetched
+  let _leadsLoading = false;
+  let _leadsError   = false;
+
+  async function fetchAllLeadsCounts() {
+    if (_leadsLoading) return;          // already in-flight
+    if (_leadsCounts !== null) return;  // already have data — won't re-fetch on re-renders
+    _leadsLoading = true;
+    _leadsError   = false;
+    try {
+      // Pass all known tenant slugs so n8n runs one aggregation per tenant in parallel
+      // Cost: exactly 1 Firestore read per tenant (same as fetching individually)
+      const tenantIds = _tenants.map(t => t.slug).filter(Boolean);
+      if (!tenantIds.length) { _leadsCounts = {}; _leadsLoading = false; return; }
+
+      const res  = await fetch(N8N_ALL_LEADS_COUNT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantIds })  // Worker adds the secret server-side
+      });
+      const data = await res.json();
+      // data.counts = { "EVOWEB-xxx": 42, "EVOWEB-yyy": 17, ... }
+      _leadsCounts = data.counts || {};
+    } catch(e) {
+      console.error('[fetchAllLeadsCounts]', e);
+      _leadsCounts = {};
+      _leadsError  = true;
+    }
+    _leadsLoading = false;
+    // Patch every visible leads cell in-place — no full table repaint
+    document.querySelectorAll('[id^="leads-"]').forEach(cell => {
+      const slug = cell.id.replace('leads-', '');
+      cell.innerHTML = leadsCell(slug);
+    });
+  }
+
+  function leadsCell(slug) {
+    if (_leadsLoading || _leadsCounts === null) {
+      return `<span style="display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:.7rem;color:var(--muted);">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin .8s linear infinite"><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0"/></svg>—</span>`;
+    }
+    if (_leadsError && _leadsCounts[slug] === undefined) {
+      return `<span style="font-family:var(--mono);font-size:.7rem;color:var(--danger);">err</span>`;
+    }
+    const count = _leadsCounts[slug] ?? 0;
+    return `<span style="font-family:var(--mono);font-size:.8rem;font-weight:600;color:var(--accent2);">${count}</span>`;
+  }
+
+  async function writeLog({ level = 'info', status = null, module, source, message, meta = {}, tenant_id = null }) {
+    try {
+      // ISO 27001 A.12: user_id captures who performed every action
+      const user_id = window._currentUser?.email || 'unknown';
+      const enrichedMeta = {
+        ...meta,
+        updated_by: { name: window._currentUser?.name || 'unknown', email: user_id }
+      };
+      await fetch(N8N_LOG_WRITE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level, status, module, source, user_id, tenant_id, message, meta: JSON.stringify(enrichedMeta) })
+      });
+    } catch(e) {
+      console.warn('[writeLog] failed:', e.message);
+    }
+  }
+
+  /* ══════════════ HELPERS (defined first — used everywhere) ══════════════ */
+  function fmt(ts) {
+    return ts?.toDate ? ts.toDate().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : '—';
+  }
+  function cap(s) { return s ? s.charAt(0).toUpperCase()+s.slice(1) : ''; }
+  function esc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function fmtDate(val) {
+    if (!val) return '—';
+    if (val?.toDate) return val.toDate().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+    if (typeof val==='string') { const d=new Date(val); return isNaN(d)?val:d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); }
+    return '—';
+  }
+  function tsToDateInput(val) {
+    if (!val) return '';
+    const d = val?.toDate ? val.toDate() : new Date(val);
+    return isNaN(d) ? '' : d.toISOString().slice(0,10);
+  }
+  let _toastTimer;
+  function toast(msg, type='success') {
+    const el = document.getElementById('toast');
+    document.getElementById('toastMsg').textContent = msg;
+    el.className = 'show ' + type;
+    el.querySelector('.toast-dot').style.background = type==='success'?'var(--accent)':'var(--danger)';
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => { el.className=''; }, 3000);
+  }
+
+  /* ══════════════ QUILL RICH TEXT EDITORS ══════════════ */
+  const QUILL_TOOLBAR = [
+    ['bold', 'italic', 'underline'],
+    [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+    [{ 'header': [1, 2, 3, false] }],
+    ['link', 'clean']
+  ];
+  const MAX_RTE_CHARS = 100000; // 100 KB soft cap per field
+
+  let _quillIntro    = null;
+  let _quillProposal = null;
+
+  function initQuillEditors() {
+    if (_quillIntro) return; // already initialised
+    _quillIntro = new Quill('#fIntroEmailEditor', {
+      theme: 'snow',
+      placeholder: 'Write the welcome / intro email body here…',
+      modules: { toolbar: QUILL_TOOLBAR }
+    });
+    _quillProposal = new Quill('#fProposalEditor', {
+      theme: 'snow',
+      placeholder: 'Write the proposal template here. Use {{name}}, {{company}} as merge tags…',
+      modules: { toolbar: QUILL_TOOLBAR }
+    });
+    // Char count listeners
+    _quillIntro.on('text-change', () => updateRteCount('fIntroEmailCount', _quillIntro));
+    _quillProposal.on('text-change', () => updateRteCount('fProposalCount', _quillProposal));
+  }
+
+  function updateRteCount(elId, quill) {
+    const len  = quill.root.innerHTML === '<p><br></p>' ? 0 : quill.root.innerHTML.length;
+    const el   = document.getElementById(elId);
+    el.textContent = len.toLocaleString() + ' chars';
+    el.className   = 'rte-char-count' + (len > MAX_RTE_CHARS * 0.8 ? ' warn' : '');
+  }
+
+  function decodeHtmlEntities(str) {
+    // Decode HTML entities using a temporary DOM element — handles &lt; &gt; &amp; &quot; etc.
+    const txt = document.createElement('textarea');
+    txt.innerHTML = str || '';
+    return txt.value;
+  }
+
+  function getRteHtml(quill) {
+    const html = quill.root.innerHTML;
+    return html === '<p><br></p>' ? '' : html;
+  }
+
+  function setRteHtml(quill, html, countElId) {
+    // Decode stored HTML entities before loading into Quill so tags render correctly
+    quill.root.innerHTML = decodeHtmlEntities(html) || '';
+    updateRteCount(countElId, quill);
+  }
+
+  function sanitizeHtml(html) {
+    // Strip script/style tags and inline event handlers — basic client-side guard before saving
+    return html.replace(/<script[\s\S]*?<\/script>/gi, '')
+               .replace(/<style[\s\S]*?<\/style>/gi, '')
+               .replace(/\son\w+\s*=\s*["'][^"']*["']/gi, '');
   }
 
   /* ══════════════ TAB SWITCHING ══════════════ */
   function switchTab(tab, resetUserFilter) {
     _activeTab = tab;
-    if (resetUserFilter || tab !== 'users') {
+    if (resetUserFilter) {
+      _userStatusFilter = 'all';
+    } else if (tab !== 'users') {
       _userStatusFilter = 'all';
     }
     updateSidebarUserHighlights();
     document.getElementById('panelTenants').classList.toggle('active', tab === 'tenants');
     document.getElementById('panelUsers').classList.toggle('active', tab === 'users');
+    document.getElementById('panelSchedules').classList.toggle('active', tab === 'schedules');
+    document.getElementById('panelTrials').classList.toggle('active', tab === 'trials');
+    document.getElementById('panelLogs').classList.toggle('active', tab === 'logs');
     document.getElementById('tabBtnTenants').classList.toggle('active', tab === 'tenants');
     document.getElementById('tabBtnUsers').classList.toggle('active', tab === 'users');
+    document.getElementById('tabBtnSchedules').classList.toggle('active', tab === 'schedules');
+    document.getElementById('tabBtnTrials').classList.toggle('active', tab === 'trials');
+    document.getElementById('tabBtnLogs').classList.toggle('active', tab === 'logs');
     document.getElementById('sideTenantsLink').classList.toggle('active', tab === 'tenants');
+    document.getElementById('sideSchedulesLink').classList.toggle('active', tab === 'schedules');
+    document.getElementById('sideTrialsLink').classList.toggle('active', tab === 'trials');
+    document.getElementById('sideLogsLink').classList.toggle('active', tab === 'logs');
+    if (tab === 'logs')   loadLogs(false);
+    if (tab === 'trials') loadTrials(false);
   }
 
   function updateSidebarUserHighlights() {
@@ -982,10 +1958,16 @@
     document.getElementById('fContactEmail').value = '';
     document.getElementById('fContactPhone').value = '';
     document.getElementById('fLocation').value     = '';
-    document.getElementById('fFromEmail').value       = '';
-    document.getElementById('fSmtpAppPassword').value = '';
-    document.getElementById('fSmtpAppPassword').type  = 'password';
+    document.getElementById('fGmailEmail').value        = '';
+    document.getElementById('fGmailConnectedAt').value  = '';
+    document.getElementById('fGmailRefreshToken').value = '';
+    setGmailBadge(false);
+    document.getElementById('fIntroSubject').value    = '';
+    document.getElementById('fProposalSubject').value = '';
     document.getElementById('tenantModal').classList.add('open');
+    initQuillEditors();
+    setRteHtml(_quillIntro,    '', 'fIntroEmailCount');
+    setRteHtml(_quillProposal, '', 'fProposalCount');
     setTimeout(() => document.getElementById('fName').focus(), 100);
   }
 
@@ -1005,13 +1987,39 @@
     document.getElementById('fContactEmail').value = t.tenant_contact_email || '';
     document.getElementById('fContactPhone').value = t.tenant_contact_phone || '';
     document.getElementById('fLocation').value     = t.location             || '';
-    document.getElementById('fFromEmail').value       = t.from_email         || '';
-    document.getElementById('fSmtpAppPassword').value = t.smtp_app_password  || '';
-    document.getElementById('fSmtpAppPassword').type  = 'password';
+    // Gmail status — read-only, format connected_at as human date if present
+    setGmailBadge(!!t.gmail_connected);
+    document.getElementById('fGmailEmail').value        = t.gmail_email || '';
+    const gCat = t.gmail_connected_at;
+    document.getElementById('fGmailConnectedAt').value  = gCat
+      ? (typeof gCat.toDate === 'function' ? gCat.toDate() : new Date(gCat)).toLocaleString()
+      : '';
+    document.getElementById('fGmailRefreshToken').value = t.gmail_refresh_token || '';
+    document.getElementById('fIntroSubject').value    = t.intro_email_subject || '';
+    document.getElementById('fProposalSubject').value = t.proposal_subject    || '';
     document.getElementById('tenantModal').classList.add('open');
+    initQuillEditors();
+    setRteHtml(_quillIntro,    t.intro_email_html      || '', 'fIntroEmailCount');
+    setRteHtml(_quillProposal, t.proposal_content_html || '', 'fProposalCount');
   }
 
   function closeTenantModal() { document.getElementById('tenantModal').classList.remove('open'); }
+
+  function setGmailBadge(connected) {
+    const badge = document.getElementById('fGmailStatusBadge');
+    const text  = document.getElementById('fGmailStatusText');
+    if (connected) {
+      badge.style.background = 'rgba(0,229,160,.12)';
+      badge.style.border     = '1px solid rgba(0,229,160,.25)';
+      badge.style.color      = 'var(--accent)';
+      text.textContent       = 'Connected';
+    } else {
+      badge.style.background = 'rgba(107,127,163,.1)';
+      badge.style.border     = '1px solid var(--border)';
+      badge.style.color      = 'var(--muted)';
+      text.textContent       = 'Not connected';
+    }
+  }
 
   /* ══════════════ SAVE TENANT ══════════════ */
   async function saveTenant() {
@@ -1024,8 +2032,20 @@
     const tenant_contact_email = document.getElementById('fContactEmail').value.trim();
     const tenant_contact_phone = document.getElementById('fContactPhone').value.trim();
     const location             = document.getElementById('fLocation').value.trim();
-    const from_email           = document.getElementById('fFromEmail').value.trim();
-    const smtp_app_password    = document.getElementById('fSmtpAppPassword').value;
+    const intro_email_subject  = document.getElementById('fIntroSubject').value.trim();
+    const proposal_subject     = document.getElementById('fProposalSubject').value.trim();
+
+    // Rich text fields — sanitize before persisting
+    const intro_email_html      = sanitizeHtml(getRteHtml(_quillIntro));
+    const proposal_content_html = sanitizeHtml(getRteHtml(_quillProposal));
+
+    // Guard: 100 KB soft cap per field
+    if (intro_email_html.length > 100000) {
+      toast('Intro email content is too large (max ~100 KB)', 'error'); return;
+    }
+    if (proposal_content_html.length > 100000) {
+      toast('Proposal content is too large (max ~100 KB)', 'error'); return;
+    }
 
     if (!name) { toast('Company name is required', 'error'); return; }
     if (!slug)  { toast('Slug is required', 'error'); return; }
@@ -1036,23 +2056,73 @@
     try {
       const db  = window._db;
       const ref = window._doc(db, 'tenants', slug);
+      let beforeSnap = null;
       if (!_editTenantSlug) {
         const existing = await window._getDoc(ref);
         if (existing.exists()) { toast(`Slug "${slug}" already exists`, 'error'); btn.disabled=false; resetSaveTenantBtn(); return; }
+      } else {
+        const existing = await window._getDoc(ref);
+        if (existing.exists()) {
+          const d = existing.data();
+          beforeSnap = {
+            name: d.name, plan: d.plan, status: d.status,
+            timezone: d.timezone, currency: d.currency,
+            tenant_contact_email: d.tenant_contact_email, tenant_contact_phone: d.tenant_contact_phone,
+            location: d.location, intro_email_subject: d.intro_email_subject, proposal_subject: d.proposal_subject
+          };
+        }
       }
       const data = {
         id: slug, name, slug, plan, status,
         timezone, currency, tenant_contact_email, tenant_contact_phone, location,
-        from_email, smtp_app_password,
+        intro_email_subject,
+        proposal_subject,
+        intro_email_html,
+        proposal_content_html,
         ..._editTenantSlug
           ? { updatedAt: window._serverTimestamp() }
           : { createdAt: window._serverTimestamp(), updatedAt: window._serverTimestamp() }
       };
       await window._setDoc(ref, data, { merge: !!_editTenantSlug });
-      toast(_editTenantSlug ? 'Tenant updated' : 'Tenant created', 'success');
+      const action = _editTenantSlug ? 'updated' : 'created';
+      toast(`Tenant ${action}`, 'success');
+      const afterSnap = { name, plan, status, timezone, currency, tenant_contact_email, tenant_contact_phone, location, intro_email_subject, proposal_subject };
+      writeLog({
+        level: 'info', status: 'success',
+        module: 'tenant', source: 'saveTenant',
+        tenant_id: slug,
+        message: `Tenant ${action}: ${name}`,
+        meta: {
+          action, slug,
+          ...(beforeSnap ? { before: beforeSnap, after: afterSnap } : afterSnap)
+        }
+      });
       closeTenantModal();
       await loadTenants();
-    } catch(e) { console.error(e); toast('Error: ' + e.message, 'error'); }
+    } catch(e) {
+      console.error(e);
+      toast('Error: ' + e.message, 'error');
+      writeLog({
+        level: 'error', status: 'failure',
+        module: 'tenant', source: 'saveTenant',
+        tenant_id: document.getElementById('fSlug').value || null,
+        message: `Failed to save tenant: ${e.message}`,
+        meta: {
+          action: _editTenantSlug ? 'updated' : 'created',
+          slug: document.getElementById('fSlug').value,
+          name:   document.getElementById('fName').value.trim(),
+          plan:   document.getElementById('fPlan').value,
+          status: document.getElementById('fStatus').value,
+          timezone:             document.getElementById('fTimezone').value,
+          currency:             document.getElementById('fCurrency').value,
+          tenant_contact_email: document.getElementById('fContactEmail').value.trim(),
+          tenant_contact_phone: document.getElementById('fContactPhone').value.trim(),
+          location:             document.getElementById('fLocation').value.trim(),
+          intro_email_subject:  document.getElementById('fIntroSubject').value.trim(),
+          proposal_subject:     document.getElementById('fProposalSubject').value.trim()
+        }
+      });
+    }
     btn.disabled = false; resetSaveTenantBtn();
   }
 
@@ -1102,6 +2172,7 @@
     document.getElementById('uTenantId').value  = '';
     document.getElementById('uGoogleId').disabled = false;
     nameEl.disabled = false;
+    document.getElementById('uTelegramUserId').value = '';
     populateTenantDropdowns();
     document.getElementById('userModal').classList.add('open');
     setTimeout(() => document.getElementById('uGoogleId').focus(), 100);
@@ -1120,6 +2191,7 @@
     document.getElementById('uStatus').value    = u.status    || 'active';
     populateTenantDropdowns();
     document.getElementById('uTenantId').value  = u.tenant_id || '';
+    document.getElementById('uTelegramUserId').value = u.telegram_user_id || '';
     document.getElementById('uGoogleId').disabled = true;
     document.getElementById('userModal').classList.add('open');
   }
@@ -1132,6 +2204,7 @@
     const role      = document.getElementById('uRole').value;
     const status    = document.getElementById('uStatus').value;
     const tenant_id = document.getElementById('uTenantId').value;
+    const telegram_user_id = document.getElementById('uTelegramUserId').value.trim();
     if (!google_id)  { toast('Google ID / Email is required', 'error'); return; }
     if (!tenant_id)  { toast('Please select a tenant', 'error'); return; }
     const btn = document.getElementById('saveUserBtn');
@@ -1139,8 +2212,17 @@
     try {
       const db = window._db;
       let ref;
+      let beforeSnap = null;
       if (_editUserId) {
         ref = window._doc(db, 'users', _editUserId);
+        const existing = await window._getDoc(ref);
+        if (existing.exists()) {
+          const d = existing.data();
+          beforeSnap = {
+            name: d.name, role: d.role, status: d.status,
+            tenant_id: d.tenant_id, telegram_user_id: d.telegram_user_id || ''
+          };
+        }
       } else {
         ref = window._doc(db, 'users', google_id);
         const existing = await window._getDoc(ref);
@@ -1153,15 +2235,46 @@
       }
       const data = {
         google_id, name, role, status, tenant_id,
+        telegram_user_id: telegram_user_id || '',
         ..._editUserId
           ? { updatedAt: window._serverTimestamp() }
           : { createdAt: window._serverTimestamp(), updatedAt: window._serverTimestamp() }
       };
       await window._setDoc(ref, data, { merge: !!_editUserId });
-      toast(_editUserId ? 'User updated' : 'User added', 'success');
+      const action = _editUserId ? 'updated' : 'added';
+      toast(`User ${action}`, 'success');
+      const afterSnap = { name, role, status, tenant_id, telegram_user_id: telegram_user_id || '' };
+      writeLog({
+        level: 'info', status: 'success',
+        module: 'user', source: 'saveUser',
+        tenant_id: tenant_id || null,
+        message: `User ${action}: ${google_id}`,
+        meta: {
+          action, google_id,
+          ...(beforeSnap ? { before: beforeSnap, after: afterSnap } : afterSnap)
+        }
+      });
       closeUserModal();
       await loadUsers();
-    } catch(e) { console.error(e); toast('Error: ' + e.message, 'error'); }
+    } catch(e) {
+      console.error(e);
+      toast('Error: ' + e.message, 'error');
+      writeLog({
+        level: 'error', status: 'failure',
+        module: 'user', source: 'saveUser',
+        tenant_id: document.getElementById('uTenantId').value || null,
+        message: `Failed to save user: ${e.message}`,
+        meta: {
+          action: _editUserId ? 'updated' : 'added',
+          google_id:        document.getElementById('uGoogleId').value.trim(),
+          name:             document.getElementById('uName').value.trim(),
+          role:             document.getElementById('uRole').value,
+          status:           document.getElementById('uStatus').value,
+          tenant_id:        document.getElementById('uTenantId').value,
+          telegram_user_id: document.getElementById('uTelegramUserId').value.trim()
+        }
+      });
+    }
     btn.disabled = false;
     document.getElementById('saveUserBtn').innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Save User';
   }
@@ -1173,11 +2286,38 @@
     const btn = document.getElementById('confirmOkBtn');
     btn.onclick = async () => {
       try {
+        const deletedUser = _users.find(u => u._id === uid);
+        // ISO 27001 A.9.2: Revoke claims before deleting so active sessions are blocked on next refresh
+        try {
+          await fetch('/set-claims', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-api-key': window._CLAIMS_API_KEY || '' },
+            body: JSON.stringify({ uid, role: 'revoked', tenant_id: null, status: 'suspended' })
+          });
+        } catch(claimsErr) {
+          console.warn('[deleteUser] claims revoke failed (non-blocking):', claimsErr.message);
+        }
         await window._deleteDoc(window._doc(window._db, 'users', uid));
         toast('User deleted', 'success');
+        writeLog({
+          level: 'warn', status: 'success',
+          module: 'user', source: 'deleteUser',
+          tenant_id: deletedUser?.tenant_id || null,
+          message: `User deleted: ${label}`,
+          meta: { uid, label }
+        });
         closeConfirm();
         await loadUsers();
-      } catch(e) { toast('Error: ' + e.message, 'error'); }
+      } catch(e) {
+        toast('Error: ' + e.message, 'error');
+        writeLog({
+          level: 'error', status: 'failure',
+          module: 'user', source: 'deleteUser',
+          tenant_id: _users.find(u => u._id === uid)?.tenant_id || null,
+          message: `Failed to delete user: ${e.message}`,
+          meta: { uid, label }
+        });
+      }
     };
     document.getElementById('confirmModal').classList.add('open');
   }
@@ -1219,6 +2359,9 @@
       tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>${msg}</div></td></tr>`;
       return;
     }
+    // Single bulk fetch — fires once, patches all cells when done
+    fetchAllLeadsCounts();
+
     tbody.innerHTML = rows.map(t => {
       const created   = fmt(t.createdAt);
       const planBadge = `<span class="badge badge-${t.plan||'free'}">${cap(t.plan||'free')}</span>`;
@@ -1234,6 +2377,7 @@
             ${userCount} user${userCount!==1?'s':''}
           </button>
         </td>
+        <td id="leads-${esc(t.slug)}">${leadsCell(t.slug)}</td>
         <td><span class="mono">${created}</span></td>
         <td>
           <div class="row-actions">
@@ -1366,49 +2510,1304 @@
   /* ══════════════ USER STATUS FILTERS ══════════════ */
   function filterActiveUsers() {
     _userStatusFilter = 'active';
-    _activeTab = 'users';
-    document.getElementById('panelTenants').classList.remove('active');
-    document.getElementById('panelUsers').classList.add('active');
-    document.getElementById('tabBtnTenants').classList.remove('active');
-    document.getElementById('tabBtnUsers').classList.add('active');
-    document.getElementById('sideTenantsLink').classList.remove('active');
+    switchTab('users');
     updateSidebarUserHighlights();
     renderUsersTable();
   }
 
   function filterSuspendedUsers() {
     _userStatusFilter = 'suspended';
-    _activeTab = 'users';
-    document.getElementById('panelTenants').classList.remove('active');
-    document.getElementById('panelUsers').classList.add('active');
-    document.getElementById('tabBtnTenants').classList.remove('active');
-    document.getElementById('tabBtnUsers').classList.add('active');
-    document.getElementById('sideTenantsLink').classList.remove('active');
+    switchTab('users');
     updateSidebarUserHighlights();
     renderUsersTable();
   }
 
-  /* ══════════════ HELPERS ══════════════ */
-  function fmt(ts) {
-    return ts?.toDate ? ts.toDate().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : '—';
+  /* ══════════════ SCHEDULES STATE ══════════════ */
+  let _schedules = [];
+  let _editScheduleId = null;
+
+  async function loadSchedules() {
+    try {
+      const snap = await window._getDocs(
+        window._collection(window._db,'scheduled_jobs')
+      );
+      _schedules = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+      _schedules.sort((a,b) => {
+        const ta = a.created_at?.toMillis ? a.created_at.toMillis() : 0;
+        const tb = b.created_at?.toMillis ? b.created_at.toMillis() : 0;
+        return tb - ta;
+      });
+      renderSchedulesTable();
+      renderScheduleStats();
+      populateSchTenantFilters();
+    } catch(e) { console.error('loadSchedules',e); }
   }
-  function cap(s) { return s.charAt(0).toUpperCase()+s.slice(1); }
-  function esc(s) {
-    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  function renderScheduleStats() {
+    const total   = _schedules.length;
+    const active  = _schedules.filter(s => s.is_active===true).length;
+    const reports = _schedules.filter(s => s.job_type==='report').length;
+    const exps    = _schedules.filter(s => s.job_type==='export').length;
+    document.getElementById('schStatTotal').textContent    = total;
+    document.getElementById('schStatActive').textContent   = active;
+    document.getElementById('schStatReports').textContent  = reports;
+    document.getElementById('schStatExports').textContent  = exps;
+    document.getElementById('cntSchedules').textContent    = total;
+    document.getElementById('tabCntSchedules').textContent = total;
   }
-  let _toastTimer;
-  function toast(msg, type='success') {
-    const el = document.getElementById('toast');
-    document.getElementById('toastMsg').textContent = msg;
-    el.className = 'show ' + type;
-    el.querySelector('.toast-dot').style.background = type==='success'?'var(--accent)':'var(--danger)';
-    clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(() => { el.className=''; }, 3000);
+
+  function populateSchTenantFilters() {
+    const opts = _tenants.map(t=>`<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join('');
+    const f = document.getElementById('schTenantFilter');
+    if (f) f.innerHTML = '<option value="">All Tenants</option>'+opts;
+    const m = document.getElementById('schTenantId');
+    if (m) m.innerHTML = '<option value="">— Select tenant —</option>'+opts;
+  }
+
+  function renderSchedulesTable() {
+    const tbody      = document.getElementById('schedulesTableBody');
+    const tenantFilt = (document.getElementById('schTenantFilter')||{}).value||'';
+    const typeFilt   = (document.getElementById('schTypeFilter')  ||{}).value||'';
+    let rows = _schedules;
+    if (tenantFilt) rows = rows.filter(s=>s.tenant_id===tenantFilt);
+    if (typeFilt)   rows = rows.filter(s=>s.job_type===typeFilt);
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        <p>No schedules found</p><p class="empty-sub">Try clearing filters or add a new schedule.</p>
+      </div></td></tr>`;
+      return;
+    }
+    tbody.innerHTML = rows.map(s => {
+      const tenant    = _tenants.find(t=>t.slug===s.tenant_id);
+      const tName     = tenant ? tenant.name : (s.tenant_id||'—');
+      const typeColor = s.job_type==='report'?'manager':s.job_type==='export'?'pro':'agent';
+      const typeBadge = `<span class="badge badge-${typeColor}">${cap(s.job_type||'—')}</span>`;
+      const freqBadge = `<span style="font-family:var(--mono);font-size:.7rem;color:var(--muted);">${s.frequency||'—'}</span>`;
+      const nextRun   = fmtDate(s.next_run_date);
+      const stBadge   = s.is_active ? `<span class="badge badge-active">Active</span>` : `<span class="badge badge-suspended">Inactive</span>`;
+      const recipient = s.recipient_email
+        ? `<span style="font-size:.75rem;">${esc(s.recipient_name||'')} <span class="mono" style="font-size:.68rem;">${esc(s.recipient_email)}</span></span>`
+        : '<span class="mono">—</span>';
+      return `<tr>
+        <td><strong style="font-size:.82rem;">${esc(s.job_name||'—')}</strong></td>
+        <td><span class="tenant-chip">${esc(tName)}</span></td>
+        <td>${typeBadge}</td><td>${freqBadge}</td>
+        <td><span class="mono">${nextRun}</span></td>
+        <td>${recipient}</td><td>${stBadge}</td>
+        <td><div class="row-actions">
+          <button class="icon-btn" title="Edit" onclick="openEditScheduleModal('${esc(s._id)}')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="icon-btn danger" title="Delete" onclick="confirmDeleteSchedule('${esc(s._id)}','${esc(s.job_name||s._id)}')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+          </button>
+        </div></td>
+      </tr>`;
+    }).join('');
+  }
+
+  function computeNextRunDate(freq, runDay) {
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    let d = new Date(today);
+    if (freq === 'daily') {
+      d.setDate(d.getDate() + 1); // tomorrow
+    } else if (freq === 'weekly') {
+      const targetDay = (runDay != null && runDay !== '') ? Number(runDay) : 1;
+      const diff = (targetDay - d.getDay() + 7) % 7 || 7; // at least 1 day ahead
+      d.setDate(d.getDate() + diff);
+    } else { // monthly
+      const targetDay = (runDay != null && runDay !== '') ? Number(runDay) : 1;
+      // Try same month first, then next month
+      d = new Date(today.getFullYear(), today.getMonth(), targetDay);
+      if (d <= today) d = new Date(today.getFullYear(), today.getMonth() + 1, targetDay);
+    }
+    return d.toISOString().slice(0, 10);
+  }
+
+  function onFrequencyChange() {
+    const freq = document.getElementById('schFrequency').value;
+    const wrap = document.getElementById('schRunDayWrap');
+    const lbl  = document.getElementById('schRunDayLabel');
+    const hint = document.getElementById('schRunDayHint');
+    const sel  = document.getElementById('schRunDay');
+    if (freq==='daily') {
+      wrap.style.display = 'none';
+    } else if (freq==='weekly') {
+      wrap.style.display = '';
+      lbl.innerHTML = 'Run Day <span class="req">*</span>';
+      hint.textContent = '0 = Sunday … 6 = Saturday';
+      sel.innerHTML = [['0','Sunday'],['1','Monday'],['2','Tuesday'],['3','Wednesday'],['4','Thursday'],['5','Friday'],['6','Saturday']]
+        .map(([v,l])=>`<option value="${v}">${l}</option>`).join('');
+    } else {
+      wrap.style.display = '';
+      lbl.innerHTML = 'Run Day of Month <span class="req">*</span>';
+      hint.textContent = '1–31 (day of the month)';
+      sel.innerHTML = Array.from({length:31},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('');
+    }
+    // Auto-update next run date whenever frequency changes
+    const runDay = freq !== 'daily' ? document.getElementById('schRunDay').value : null;
+    const dateField = document.getElementById('schNextRunDate');
+    dateField.value = computeNextRunDate(freq, runDay);
+  }
+
+  // Also recompute next run date when run day changes
+  document.addEventListener('DOMContentLoaded', () => {
+    const runDaySel = document.getElementById('schRunDay');
+    if (runDaySel) {
+      runDaySel.addEventListener('change', () => {
+        const freq = document.getElementById('schFrequency').value;
+        document.getElementById('schNextRunDate').value = computeNextRunDate(freq, runDaySel.value);
+      });
+    }
+  });
+
+  function openCreateScheduleModal() {
+    _editScheduleId = null;
+    document.getElementById('modalScheduleTitle').textContent = 'Add Schedule';
+    document.getElementById('schJobName').value        = '';
+    document.getElementById('schJobType').value        = 'report';
+    document.getElementById('schFrequency').value      = 'weekly';
+    document.getElementById('schNextRunDate').value    = '';
+    document.getElementById('schRecipientName').value  = '';
+    document.getElementById('schRecipientName').style.borderColor = '';
+    document.getElementById('schRecipientEmail').value = '';
+    document.getElementById('schRecipientEmail').style.borderColor = '';
+    document.getElementById('schIsActive').value       = 'true';
+    populateSchTenantFilters();
+    onFrequencyChange(); // this now also sets schNextRunDate
+    document.getElementById('schRunDay').value = '1';
+    document.getElementById('scheduleModal').classList.add('open');
+    setTimeout(() => document.getElementById('schJobName').focus(), 100);
+  }
+
+  function openEditScheduleModal(id) {
+    const s = _schedules.find(x=>x._id===id);
+    if (!s) return;
+    _editScheduleId = id;
+    document.getElementById('modalScheduleTitle').textContent = 'Edit Schedule';
+    populateSchTenantFilters();
+    document.getElementById('schTenantId').value       = s.tenant_id       ||'';
+    document.getElementById('schJobType').value        = s.job_type        ||'report';
+    document.getElementById('schJobName').value        = s.job_name        ||'';
+    document.getElementById('schFrequency').value      = s.frequency       ||'weekly';
+    onFrequencyChange();
+    document.getElementById('schRunDay').value         = String(s.run_day??1);
+    document.getElementById('schNextRunDate').value    = tsToDateInput(s.next_run_date);
+    document.getElementById('schRecipientName').value  = s.recipient_name  ||'';
+    document.getElementById('schRecipientEmail').value = s.recipient_email ||'';
+    document.getElementById('schIsActive').value       = s.is_active===false?'false':'true';
+    document.getElementById('scheduleModal').classList.add('open');
+  }
+
+  function closeScheduleModal() { document.getElementById('scheduleModal').classList.remove('open'); }
+
+  async function saveSchedule() {
+    // Guard: ensure recipient fields are never skipped
+    const _rn = (document.getElementById('schRecipientName').value||'').trim();
+    const _re = (document.getElementById('schRecipientEmail').value||'').trim();
+    if (!_rn || !_re) {
+      if (!_rn) { document.getElementById('schRecipientName').style.borderColor='var(--danger)'; document.getElementById('schRecipientName').focus(); toast('Recipient name is required','error'); return; }
+      if (!_re) { document.getElementById('schRecipientEmail').style.borderColor='var(--danger)'; document.getElementById('schRecipientEmail').focus(); toast('Recipient email is required','error'); return; }
+    }
+    const tenant_id       = document.getElementById('schTenantId').value;
+    const job_type        = document.getElementById('schJobType').value;
+    const job_name        = document.getElementById('schJobName').value.trim().replace(/\s+/g,'_').toLowerCase();
+    const frequency       = document.getElementById('schFrequency').value;
+    const run_day         = frequency==='daily' ? null : Number(document.getElementById('schRunDay').value);
+    const nextDateStr     = document.getElementById('schNextRunDate').value;
+    const recipient_name  = document.getElementById('schRecipientName').value.trim();
+    const recipient_email = document.getElementById('schRecipientEmail').value.trim();
+    const is_active       = document.getElementById('schIsActive').value==='true';
+    if (!tenant_id)   { toast('Please select a tenant','error'); return; }
+    if (!job_name)    { toast('Job name is required','error'); return; }
+    if (!nextDateStr) { toast('Next run date is required','error'); return; }
+    if (!recipient_name) {
+      document.getElementById('schRecipientName').style.borderColor = 'var(--danger)';
+      document.getElementById('schRecipientName').focus();
+      toast('Recipient name is required','error'); return;
+    }
+    document.getElementById('schRecipientName').style.borderColor = '';
+    if (!recipient_email) {
+      document.getElementById('schRecipientEmail').style.borderColor = 'var(--danger)';
+      document.getElementById('schRecipientEmail').focus();
+      toast('Recipient email is required','error'); return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient_email)) {
+      document.getElementById('schRecipientEmail').style.borderColor = 'var(--danger)';
+      document.getElementById('schRecipientEmail').focus();
+      toast('Recipient email is not a valid email address','error'); return;
+    }
+    document.getElementById('schRecipientEmail').style.borderColor = '';
+    const next_run_date = window._Timestamp.fromDate(new Date(nextDateStr));
+    const btn = document.getElementById('saveScheduleBtn');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const db   = window._db;
+      const data = { tenant_id, job_type, job_name, frequency, is_active,
+        recipient_name, recipient_email, next_run_date,
+        ...(run_day!==null?{run_day}:{}),
+        updated_at: window._serverTimestamp() };
+      const afterSnap = { job_name, job_type, frequency, is_active, tenant_id,
+        recipient_name, recipient_email,
+        next_run_date: nextDateStr,
+        ...(run_day!==null?{run_day}:{}) };
+      if (_editScheduleId) {
+        let beforeSnap = null;
+        const existing = await window._getDoc(window._doc(db,'scheduled_jobs',_editScheduleId));
+        if (existing.exists()) {
+          const d = existing.data();
+          beforeSnap = { job_name: d.job_name, job_type: d.job_type, frequency: d.frequency,
+            is_active: d.is_active, tenant_id: d.tenant_id,
+            recipient_name: d.recipient_name, recipient_email: d.recipient_email,
+            next_run_date: d.next_run_date?.toDate?.()?.toISOString?.() || d.next_run_date || null,
+            ...(d.run_day!=null?{run_day:d.run_day}:{}) };
+        }
+        await window._setDoc(window._doc(db,'scheduled_jobs',_editScheduleId), data, { merge: true });
+        toast('Schedule updated','success');
+        writeLog({
+          level: 'info', status: 'success',
+          module: 'schedule', source: 'saveSchedule',
+          tenant_id: tenant_id || null,
+          message: `Schedule updated: ${job_name}`,
+          meta: { action: 'updated', id: _editScheduleId,
+            ...(beforeSnap ? { before: beforeSnap, after: afterSnap } : afterSnap) }
+        });
+      } else {
+        data.last_run_at = null;
+        data.created_at  = window._serverTimestamp();
+        const docRef = await window._addDoc(window._collection(db,'scheduled_jobs'), data);
+        toast('Schedule created','success');
+        writeLog({
+          level: 'info', status: 'success',
+          module: 'schedule', source: 'saveSchedule',
+          tenant_id: tenant_id || null,
+          message: `Schedule created: ${job_name}`,
+          meta: { action: 'created', id: docRef.id, ...afterSnap }
+        });
+      }
+      closeScheduleModal();
+      await loadSchedules();
+    } catch(e) {
+      console.error(e);
+      toast('Error: '+e.message,'error');
+      writeLog({
+        level: 'error', status: 'failure',
+        module: 'schedule', source: 'saveSchedule',
+        tenant_id: document.getElementById('schTenantId').value || null,
+        message: `Failed to save schedule: ${e.message}`,
+        meta: {
+          action: _editScheduleId ? 'updated' : 'created',
+          id: _editScheduleId || null,
+          job_name:        document.getElementById('schJobName').value.trim(),
+          job_type:        document.getElementById('schJobType').value,
+          frequency:       document.getElementById('schFrequency').value,
+          is_active:       document.getElementById('schIsActive').value === 'true',
+          tenant_id:       document.getElementById('schTenantId').value,
+          recipient_name:  document.getElementById('schRecipientName').value.trim(),
+          recipient_email: document.getElementById('schRecipientEmail').value.trim(),
+          next_run_date:   document.getElementById('schNextRunDate').value
+        }
+      });
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Save Schedule';
+  }
+
+  function confirmDeleteSchedule(id, label) {
+    document.getElementById('confirmTitle').textContent = 'Delete Schedule';
+    document.getElementById('confirmBody').innerHTML = `Remove job <strong>${esc(label)}</strong>? This cannot be undone.`;
+    const btn = document.getElementById('confirmOkBtn');
+    btn.onclick = async () => {
+      try {
+        const deletedSch = _schedules.find(s => s._id === id);
+        await window._deleteDoc(window._doc(window._db,'scheduled_jobs',id));
+        toast('Schedule deleted','success');
+        writeLog({
+          level: 'warn', status: 'success',
+          module: 'schedule', source: 'deleteSchedule',
+          tenant_id: deletedSch?.tenant_id || null,
+          message: `Schedule deleted: ${label}`,
+          meta: {
+            action: 'deleted', id,
+            job_name:        deletedSch?.job_name        || label,
+            job_type:        deletedSch?.job_type        || null,
+            frequency:       deletedSch?.frequency       || null,
+            is_active:       deletedSch?.is_active       ?? null,
+            tenant_id:       deletedSch?.tenant_id       || null,
+            recipient_name:  deletedSch?.recipient_name  || null,
+            recipient_email: deletedSch?.recipient_email || null,
+            run_day:         deletedSch?.run_day         ?? null
+          }
+        });
+        closeConfirm();
+        await loadSchedules();
+      } catch(e) {
+        toast('Error: '+e.message,'error');
+        const deletedSch = _schedules.find(s => s._id === id);
+        writeLog({
+          level: 'error', status: 'failure',
+          module: 'schedule', source: 'deleteSchedule',
+          tenant_id: deletedSch?.tenant_id || null,
+          message: `Failed to delete schedule: ${e.message}`,
+          meta: {
+            action: 'deleted', id,
+            job_name:        deletedSch?.job_name        || label,
+            job_type:        deletedSch?.job_type        || null,
+            frequency:       deletedSch?.frequency       || null,
+            is_active:       deletedSch?.is_active       ?? null,
+            tenant_id:       deletedSch?.tenant_id       || null,
+            recipient_name:  deletedSch?.recipient_name  || null,
+            recipient_email: deletedSch?.recipient_email || null
+          }
+        });
+      }
+    };
+    document.getElementById('confirmModal').classList.add('open');
   }
 
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { closeTenantModal(); closeUserModal(); closeConfirm(); }
+    if (e.key === 'Escape') { closeTenantModal(); closeUserModal(); closeConfirm(); closeScheduleModal(); }
   });
+
+  /* ══════════════ LOGS PANEL ══════════════ */
+  let _logs = [];
+  let _logsLoading = false;
+  let _logsLoaded  = false;
+  let _logsPage = 1;
+  const LOGS_PER_PAGE = 25;
+
+  async function loadLogs(force = false) {
+    if (_logsLoading) return;
+    if (_logsLoaded && !force) return; // use cache
+    _logsLoading = true;
+    const tbody = document.getElementById('logsTableBody');
+    tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state">
+      <div class="auth-spinner" style="margin:0 auto 10px;"></div>
+      <p style="font-size:.8rem;">Loading logs…</p>
+    </div></td></tr>`;
+    try {
+      const res  = await fetch(N8N_LOG_READ);
+      const text = await res.text();
+      let data = [];
+      if (text && text.trim()) {
+        try { data = JSON.parse(text); } catch(e) { data = []; }
+      }
+      _logs = Array.isArray(data) ? data.map(item => item.json ?? item) : [];
+      _logsLoaded = true;
+      _logsPage = 1;
+      // Populate module filter dynamically from log data
+      const moduleSel = document.getElementById('logModuleFilter');
+      const prevModule = moduleSel.value;
+      const moduleIds = [...new Set(_logs.map(l => l.module).filter(Boolean))].sort();
+      moduleSel.innerHTML = '<option value="">All Modules</option>' +
+        moduleIds.map(m => `<option value="${esc(m)}"${m === prevModule ? ' selected' : ''}>${esc(m.replace(/_/g,' ').replace(/\w/g,c=>c.toUpperCase()))}</option>`).join('');
+      // Populate tenant filter from log data
+      const tenantSel = document.getElementById('logTenantFilter');
+      const prevTenant = tenantSel.value;
+      const tenantIds = [...new Set(_logs.map(l => l.tenant_id).filter(Boolean))].sort();
+      tenantSel.innerHTML = '<option value="">All Tenants</option>' +
+        tenantIds.map(t => `<option value="${esc(t)}"${t === prevTenant ? ' selected' : ''}>${esc(t)}</option>`).join('');
+      renderLogsTable();
+      renderLogStats();
+      document.getElementById('cntLogs').textContent    = _logs.length;
+      document.getElementById('tabCntLogs').textContent = _logs.length;
+    } catch(e) {
+      console.error('loadLogs', e);
+      tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state">
+        <p>Failed to load logs</p><p class="empty-sub">${esc(e.message)}</p>
+      </div></td></tr>`;
+    }
+    _logsLoading = false;
+  }
+
+  /* ══════════════════════════════════════════════════════════
+     TRIAL REQUESTS — Neon via n8n
+  ══════════════════════════════════════════════════════════ */
+
+  async function loadTrials(force = false) {
+    if (_trialsLoading) return;
+    if (_trialsLoaded && !force) return;
+    _trialsLoading = true;
+    const tbody = document.getElementById('trialsTableBody');
+    tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state">
+      <div style="display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--muted);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin .7s linear infinite"><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0"/></svg>
+        Loading trial requests…
+      </div>
+    </div></td></tr>`;
+    try {
+      const res  = await fetch(N8N_TRIAL_READ);
+      const text = await res.text();
+      let data = [];
+      if (text && text.trim()) {
+        try { data = JSON.parse(text); } catch(e) { data = []; }
+      }
+      _trials = Array.isArray(data) ? data.map(item => item.json ?? item) : [];
+      _trialsLoaded = true;
+      _trialsPage   = 1;
+      renderTrialsTable();
+      renderTrialStats();
+      const cnt = _trials.length;
+      document.getElementById('cntTrials').textContent    = cnt;
+      document.getElementById('tabCntTrials').textContent = cnt;
+    } catch(e) {
+      console.error('loadTrials', e);
+      tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state">
+        <p>Failed to load trial requests</p><p class="empty-sub">${esc(e.message)}</p>
+      </div></td></tr>`;
+    }
+    _trialsLoading = false;
+  }
+
+  function renderTrialStats() {
+    const total     = _trials.length;
+    const newCount  = _trials.filter(t => t.status === 'new').length;
+    const approved  = _trials.filter(t => t.status === 'approved').length;
+    const rejected  = _trials.filter(t => t.status === 'rejected').length;
+    document.getElementById('trialStatTotal').textContent    = total;
+    document.getElementById('trialStatNew').textContent      = newCount;
+    document.getElementById('trialStatApproved').textContent = approved;
+    document.getElementById('trialStatRejected').textContent = rejected;
+  }
+
+  function resetTrialsPage() { _trialsPage = 1; renderTrialsTable(); }
+  function goTrialsPage(p)   { _trialsPage = p; renderTrialsTable(); }
+
+  function renderTrialsTable() {
+    const tbody      = document.getElementById('trialsTableBody');
+    const statusFilt = document.getElementById('trialStatusFilter').value;
+    const search     = (document.getElementById('trialSearch').value || '').toLowerCase();
+
+    let rows = _trials;
+    if (statusFilt) rows = rows.filter(t => t.status === statusFilt);
+    if (search)     rows = rows.filter(t =>
+      (t.name    || '').toLowerCase().includes(search) ||
+      (t.email   || '').toLowerCase().includes(search) ||
+      (t.company || '').toLowerCase().includes(search) ||
+      (t.use_case|| '').toLowerCase().includes(search)
+    );
+
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <p>No trial requests match</p><p class="empty-sub">Try adjusting filters or search.</p>
+      </div></td></tr>`;
+      document.getElementById('trialsPagBar').style.display = 'none';
+      return;
+    }
+
+    const totalPages = Math.ceil(rows.length / TRIALS_PER_PAGE);
+    if (_trialsPage > totalPages) _trialsPage = totalPages;
+    const start = (_trialsPage - 1) * TRIALS_PER_PAGE;
+    const page  = rows.slice(start, start + TRIALS_PER_PAGE);
+
+    tbody.innerHTML = page.map(t => {
+      const submitted = t.submitted_at
+        ? new Date(t.submitted_at).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})
+        : '—';
+      const statusCls = {new:'new',approved:'approved',rejected:'rejected',expired:'expired',converted:'converted'}[t.status] || 'muted';
+      const statusBadge = t.status
+        ? `<span class="badge badge-${statusCls}">${esc(t.status)}</span>`
+        : '<span class="mono">—</span>';
+      const startD = t.trial_start_date ? new Date(t.trial_start_date).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : null;
+      const endD   = t.trial_end_date   ? new Date(t.trial_end_date  ).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : null;
+      const trialPeriod = (startD || endD)
+        ? `<span style="font-family:var(--mono);font-size:.69rem;">${startD||'?'} → ${endD||'?'}</span>`
+        : '<span class="mono" style="color:var(--muted);font-size:.7rem;">—</span>';
+      return `<tr>
+        <td><span class="mono" style="font-size:.7rem;">${submitted}</span></td>
+        <td><span style="font-weight:600;font-size:.8rem;">${esc(t.name||'—')}</span></td>
+        <td><span style="font-size:.77rem;">${esc(t.email||'—')}</span></td>
+        <td><span style="font-size:.78rem;font-weight:500;">${esc(t.company||'—')}</span></td>
+        <td><span style="font-size:.75rem;">${esc(t.team_size||'—')}</span></td>
+        <td>${statusBadge}</td>
+        <td>${trialPeriod}</td>
+        <td>
+          <div class="row-actions">
+            <button class="icon-btn" title="View" onclick="viewTrial(${t.id})">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+            <button class="icon-btn"
+              title="${t.status === 'rejected' ? 'Locked — cannot edit rejected trial' : 'Edit'}"
+              style="${t.status === 'rejected' ? 'opacity:.35;cursor:not-allowed;' : ''}"
+              onclick="openTrialModal(${t.id})"
+              ${t.status === 'rejected' ? 'disabled' : ''}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="icon-btn"
+              title="${t.status === 'approved' ? 'Already Approved' : t.status === 'rejected' ? 'Cannot approve — trial is rejected' : 'Approve'}"
+              style="color:${t.status === 'approved' ? 'var(--muted)' : (t.status === 'rejected' ? 'var(--muted)' : 'var(--accent)')};border-color:${(t.status === 'approved' || t.status === 'rejected') ? 'var(--border)' : 'rgba(0,229,160,.2)'};${(t.status === 'approved' || t.status === 'rejected') ? 'opacity:.35;cursor:not-allowed;' : ''}"
+              onclick="quickStatusTrial(${t.id},'approved')"
+              ${(t.status === 'approved' || t.status === 'rejected') ? 'disabled' : ''}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+            <button class="icon-btn danger"
+              title="${t.status === 'approved' ? 'Cannot reject — trial is approved' : t.status === 'rejected' ? 'Already Rejected' : 'Reject'}"
+              style="${(t.status === 'approved' || t.status === 'rejected') ? 'opacity:.35;cursor:not-allowed;' : ''}"
+              onclick="quickStatusTrial(${t.id},'rejected')"
+              ${(t.status === 'approved' || t.status === 'rejected') ? 'disabled' : ''}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+            <button class="icon-btn danger" title="Delete" onclick="deleteTrial(${t.id}, '${esc(t.name||t.email)}')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+            </button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+
+    /* Pagination */
+    const bar  = document.getElementById('trialsPagBar');
+    const info = document.getElementById('trialsPagInfo');
+    const btns = document.getElementById('trialsPagBtns');
+    bar.style.display = 'flex';
+    info.textContent  = `${start + 1}–${Math.min(start + TRIALS_PER_PAGE, rows.length)} of ${rows.length}`;
+
+    let pages = [];
+    if (totalPages <= 7) {
+      pages = Array.from({length: totalPages}, (_, i) => i + 1);
+    } else {
+      pages = [1];
+      if (_trialsPage > 3) pages.push('…');
+      for (let i = Math.max(2, _trialsPage - 1); i <= Math.min(totalPages - 1, _trialsPage + 1); i++) pages.push(i);
+      if (_trialsPage < totalPages - 2) pages.push('…');
+      pages.push(totalPages);
+    }
+
+    btns.innerHTML =
+      `<button class="page-btn" onclick="goTrialsPage(${_trialsPage - 1})" ${_trialsPage === 1 ? 'disabled' : ''}>‹</button>` +
+      pages.map(p => p === '…'
+        ? `<span class="page-btn" style="cursor:default;opacity:.4;">…</span>`
+        : `<button class="page-btn ${p === _trialsPage ? 'active' : ''}" onclick="goTrialsPage(${p})">${p}</button>`
+      ).join('') +
+      `<button class="page-btn" onclick="goTrialsPage(${_trialsPage + 1})" ${_trialsPage === totalPages ? 'disabled' : ''}>›</button>`;
+  }
+
+  /* ── Trial Modal ── */
+  function openTrialModal(id) {
+    _editTrialId = id;
+    document.getElementById('modalTrialTitle').textContent = id ? 'Edit Trial Request' : 'New Trial Request';
+
+    const _approvedLockFields = ['trName','trEmail','trCompany','trPhone','trTeamSize','trUseCase','trSource','trComments','trStartDate','trEndDate'];
+
+    if (id) {
+      const t = _trials.find(x => x.id == id);
+      if (!t) return;
+      if (t.status === 'rejected') {
+        toast('Cannot edit — rejected trials are locked and cannot be modified.', 'warn');
+        return;
+      }
+
+      document.getElementById('trName').value      = t.name         || '';
+      document.getElementById('trEmail').value     = t.email        || '';
+      document.getElementById('trCompany').value   = t.company      || '';
+      document.getElementById('trPhone').value     = t.phone        || '';
+      document.getElementById('trTeamSize').value  = t.team_size    || '';
+      document.getElementById('trStatus').value    = t.status       || 'new';
+      document.getElementById('trUseCase').value   = t.use_case     || '';
+      document.getElementById('trSource').value    = t.source       || 'evoAIDesk Tenant Manager';
+      document.getElementById('trComments').value  = t.comments     || '';
+      document.getElementById('trStartDate').value = t.trial_start_date ? t.trial_start_date.slice(0,10) : '';
+      document.getElementById('trEndDate').value   = t.trial_end_date   ? t.trial_end_date.slice(0,10)   : '';
+
+      if (t.status === 'approved') {
+        // Lock all fields except Status — only Expired / Converted are valid next states
+        _approvedLockFields.forEach(fid => {
+          const el = document.getElementById(fid);
+          if (el) { el.disabled = true; el.style.opacity = '.45'; el.style.cursor = 'not-allowed'; }
+        });
+        const sel = document.getElementById('trStatus');
+        sel.innerHTML = [
+          '<option value="approved">Approved</option>',
+          '<option value="expired">Expired</option>',
+          '<option value="converted">Converted</option>'
+        ].join('');
+        sel.value = 'approved';
+        const banner = document.getElementById('trialApprovedBanner');
+        if (banner) banner.style.display = 'flex';
+      } else {
+        // Normal edit — all fields enabled, full status list
+        _approvedLockFields.forEach(fid => {
+          const el = document.getElementById(fid);
+          if (el) { el.disabled = false; el.style.opacity = ''; el.style.cursor = ''; }
+        });
+        const sel = document.getElementById('trStatus');
+        sel.innerHTML = [
+          '<option value="new">New</option>',
+          '<option value="approved">Approved</option>',
+          '<option value="rejected">Rejected</option>',
+          '<option value="expired">Expired</option>',
+          '<option value="converted">Converted</option>'
+        ].join('');
+        sel.value = t.status || 'new';
+        const banner = document.getElementById('trialApprovedBanner');
+        if (banner) banner.style.display = 'none';
+      }
+    } else {
+      document.getElementById('trName').value      = '';
+      document.getElementById('trEmail').value     = '';
+      document.getElementById('trCompany').value   = '';
+      document.getElementById('trPhone').value     = '';
+      document.getElementById('trTeamSize').value  = '';
+      document.getElementById('trUseCase').value   = '';
+      document.getElementById('trSource').value    = 'evoAIDesk Tenant Manager';
+      document.getElementById('trComments').value  = '';
+      document.getElementById('trStartDate').value = '';
+      document.getElementById('trEndDate').value   = '';
+      _approvedLockFields.forEach(fid => {
+        const el = document.getElementById(fid);
+        if (el) { el.disabled = false; el.style.opacity = ''; el.style.cursor = ''; }
+      });
+      const sel = document.getElementById('trStatus');
+      sel.innerHTML = [
+        '<option value="new">New</option>',
+        '<option value="approved">Approved</option>',
+        '<option value="rejected">Rejected</option>',
+        '<option value="expired">Expired</option>',
+        '<option value="converted">Converted</option>'
+      ].join('');
+      sel.value = 'new';
+      const banner = document.getElementById('trialApprovedBanner');
+      if (banner) banner.style.display = 'none';
+    }
+
+    document.getElementById('trialModal').classList.add('open');
+    setTimeout(() => {
+      const t = id ? _trials.find(x => x.id == id) : null;
+      const firstFocus = (t && t.status === 'approved')
+        ? document.getElementById('trStatus')
+        : document.getElementById('trName');
+      if (firstFocus) firstFocus.focus();
+    }, 100);
+  }
+
+  function closeTrialModal() {
+    document.getElementById('trialModal').classList.remove('open');
+    // Re-enable any fields that may have been locked in approved-mode
+    ['trName','trEmail','trCompany','trPhone','trTeamSize','trUseCase','trSource','trComments','trStartDate','trEndDate'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.disabled = false; el.style.opacity = ''; el.style.cursor = ''; el.style.borderColor=''; el.style.boxShadow=''; delete el.dataset.err; }
+    });
+    // Hide approved banner
+    const banner = document.getElementById('trialApprovedBanner');
+    if (banner) banner.style.display = 'none';
+    // Hide error box
+    const box = document.getElementById('trialModalMsg');
+    if (box) box.style.display = 'none';
+    // Reset spinner
+    const lbl = document.getElementById('saveTrialBtnLabel');
+    const spn = document.getElementById('saveTrialBtnSpinner');
+    if (lbl) lbl.style.display = 'flex';
+    if (spn) spn.style.display = 'none';
+    const btn = document.getElementById('saveTrialBtn');
+    if (btn) btn.disabled = false;
+  }
+
+  /* ── Trial modal: clear error + highlight field (login.html pattern) ── */
+  function trShowError(msg) {
+    const box = document.getElementById('trialModalMsg');
+    box.textContent = msg;
+    box.style.display = 'block';
+    box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  function trClearError(el, msgId) {
+    el.style.borderColor = '';
+    el.style.boxShadow   = '';
+    delete el.dataset.err;
+    const box = document.getElementById(msgId);
+    if (box) box.style.display = 'none';
+  }
+  function trMarkError(el) {
+    el.style.borderColor = 'rgba(255,77,109,.5)';
+    el.style.boxShadow   = '0 0 0 3px rgba(255,77,109,.06)';
+    el.dataset.err = '1';
+  }
+
+  async function saveTrial() {
+    const status = document.getElementById('trStatus').value;
+
+    // ── Approved-mode: only status change allowed (expired / converted) ──
+    if (_editTrialId) {
+      const existing = _trials.find(x => x.id == _editTrialId);
+      if (existing && existing.status === 'approved') {
+        if (status === 'approved') {
+          trShowError('Please change the status to Expired or Converted before saving.');
+          return;
+        }
+        const btn    = document.getElementById('saveTrialBtn');
+        const lblEl  = document.getElementById('saveTrialBtnLabel');
+        const spinEl = document.getElementById('saveTrialBtnSpinner');
+        btn.disabled = true; lblEl.style.display = 'none'; spinEl.style.display = 'inline-block';
+        try {
+          const res = await fetch(N8N_TRIAL_UPDATE, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'update', id: _editTrialId, status,
+              name:             existing.name             || null,
+              email:            existing.email            || null,
+              company:          existing.company          || null,
+              phone:            existing.phone            || null,
+              team_size:        existing.team_size        || null,
+              use_case:         existing.use_case         || null,
+              source:           existing.source           || null,
+              comments:         existing.comments         || null,
+              trial_start_date: existing.trial_start_date?.split('T')[0] || null,
+              trial_end_date:   existing.trial_end_date?.split('T')[0]   || null,
+            })
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          toast(`Trial marked as ${status}`, 'success');
+          writeLog({
+            level: 'info', status: 'success',
+            module: 'trial', source: 'saveTrial',
+            message: `Trial status → ${status}: ${existing.name} (${existing.email})`,
+            meta: {
+              action: 'status_change', id: _editTrialId,
+              before: { status: existing.status },
+              after:  { status },
+              name:             existing.name             || null,
+              email:            existing.email            || null,
+              company:          existing.company          || null,
+              phone:            existing.phone            || null,
+              team_size:        existing.team_size        || null,
+              use_case:         existing.use_case         || null,
+              source:           existing.source           || null,
+              comments:         existing.comments         || null,
+              trial_start_date: existing.trial_start_date || null,
+              trial_end_date:   existing.trial_end_date   || null
+            }
+          });
+          closeTrialModal();
+          _trialsLoaded = false;
+          await loadTrials(true);
+        } catch(e) {
+          trShowError('Error: ' + e.message);
+          btn.disabled = false; lblEl.style.display = 'flex'; spinEl.style.display = 'none';
+        }
+        return;
+      }
+    }
+
+    // ── Normal create / edit flow ──
+    const name    = document.getElementById('trName').value.trim();
+    const email   = document.getElementById('trEmail').value.trim();
+    const company = document.getElementById('trCompany').value.trim();
+    const team    = document.getElementById('trTeamSize').value;
+    const useCase = document.getElementById('trUseCase').value.trim();
+
+    // Validate all required fields — highlight in red like login.html
+    let valid = true;
+    const required = [
+      { id: 'trName',    val: name,    label: 'Full Name' },
+      { id: 'trEmail',   val: email,   label: 'Work Email' },
+      { id: 'trCompany', val: company, label: 'Company' },
+      { id: 'trTeamSize',val: team,    label: 'Team Size' },
+      { id: 'trUseCase', val: useCase, label: 'Use Case' },
+    ];
+    required.forEach(({ id, val }) => {
+      const el = document.getElementById(id);
+      if (!val) { trMarkError(el); valid = false; }
+      else { el.style.borderColor = ''; el.style.boxShadow = ''; delete el.dataset.err; }
+    });
+    if (!valid) { trShowError('Please fill in all required fields.'); return; }
+
+    // Email format check (login.html pattern)
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      trMarkError(document.getElementById('trEmail'));
+      trShowError('Please enter a valid email address.');
+      return;
+    }
+
+    // Approved status requires both trial dates
+    if (status === 'approved') {
+      const startDate = document.getElementById('trStartDate').value;
+      const endDate   = document.getElementById('trEndDate').value;
+      if (!startDate || !endDate) {
+        if (!startDate) trMarkError(document.getElementById('trStartDate'));
+        if (!endDate)   trMarkError(document.getElementById('trEndDate'));
+        trShowError('Both Trial Start Date and Trial End Date are required to save with Approved status.');
+        return;
+      }
+    }
+
+    const payload = {
+      name, email, company,
+      phone:           document.getElementById('trPhone').value.trim()   || null,
+      team_size:       team || null,
+      status:          status,
+      use_case:        useCase || null,
+      source:          document.getElementById('trSource').value.trim()   || 'evoAIDesk Tenant Manager',
+      comments:        document.getElementById('trComments').value.trim() || null,
+      trial_start_date:document.getElementById('trStartDate').value       || null,
+      trial_end_date:  document.getElementById('trEndDate').value         || null,
+    };
+
+    // Show spinner (login.html pattern)
+    const btn     = document.getElementById('saveTrialBtn');
+    const lblEl   = document.getElementById('saveTrialBtnLabel');
+    const spinEl  = document.getElementById('saveTrialBtnSpinner');
+    btn.disabled  = true;
+    lblEl.style.display  = 'none';
+    spinEl.style.display = 'inline-block';
+
+    try {
+      const url    = _editTrialId ? N8N_TRIAL_UPDATE : N8N_TRIAL_WRITE;
+      if (_editTrialId) {
+        payload.id     = _editTrialId;
+        payload.action = 'update';
+      } else {
+        payload.action = 'write';
+      }
+      const res    = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const action = _editTrialId ? 'updated' : 'created';
+      toast(`Trial request ${action}`, 'success');
+      const trialAfter = { name, email, company,
+        phone:             payload.phone,
+        team_size:         payload.team_size,
+        status:            payload.status,
+        use_case:          payload.use_case,
+        source:            payload.source,
+        comments:          payload.comments,
+        trial_start_date:  payload.trial_start_date,
+        trial_end_date:    payload.trial_end_date
+      };
+      const trialBefore = _editTrialId ? (() => {
+        const t = _trials.find(x => x.id == _editTrialId);
+        return t ? { name: t.name, email: t.email, company: t.company,
+          phone: t.phone || null, team_size: t.team_size || null,
+          status: t.status, use_case: t.use_case || null,
+          source: t.source || null, comments: t.comments || null,
+          trial_start_date: t.trial_start_date?.split('T')[0] || null,
+          trial_end_date:   t.trial_end_date?.split('T')[0]   || null } : null;
+      })() : null;
+      writeLog({
+        level: 'info', status: 'success',
+        module: 'trial', source: 'saveTrial',
+        message: `Trial ${action}: ${name} — ${company}`,
+        meta: {
+          action, id: _editTrialId || null,
+          ...(trialBefore ? { before: trialBefore, after: trialAfter } : trialAfter)
+        }
+      });
+      closeTrialModal();
+      _trialsLoaded = false;
+      await loadTrials(true);
+    } catch(e) {
+      console.error(e);
+      trShowError('Error: ' + e.message);
+      btn.disabled = false;
+      lblEl.style.display  = 'flex';
+      spinEl.style.display = 'none';
+      return;
+    }
+    btn.disabled = false;
+    lblEl.style.display  = 'flex';
+    spinEl.style.display = 'none';
+  }
+
+  async function quickStatusTrial(id, status) {
+    const t = _trials.find(x => x.id == id);
+    if (!t) return;
+
+    // Check 1: Do not allow approving an already-approved trial
+    if (status === 'approved' && t.status === 'approved') {
+      toast('Already approved — this trial has already been approved.', 'warn');
+      return;
+    }
+
+    // Check 1b: Do not allow rejecting an approved trial
+    if (status === 'rejected' && t.status === 'approved') {
+      toast('Cannot reject — approved trials cannot be rejected.', 'warn');
+      return;
+    }
+
+    // Check 1c: Do not allow approving a rejected trial
+    if (status === 'approved' && t.status === 'rejected') {
+      toast('Cannot approve — rejected trials cannot be approved.', 'warn');
+      return;
+    }
+
+    // Check 2: Do not allow approving unless both trial dates are set
+    if (status === 'approved' && (!t.trial_start_date || !t.trial_end_date)) {
+      toast('Cannot approve — please set both Trial Start Date and Trial End Date first.', 'warn');
+      return;
+    }
+
+    try {
+      const res = await fetch(N8N_TRIAL_UPDATE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            action: 'update', id, status,
+            name:             t.name             || null,
+            email:            t.email            || null,
+            company:          t.company          || null,
+            phone:            t.phone            || null,
+            team_size:        t.team_size        || null,
+            use_case:         t.use_case         || null,
+            source:           t.source           || null,
+            comments:         t.comments         || null,
+            trial_start_date: t.trial_start_date || null,
+            trial_end_date:   t.trial_end_date   || null,
+            submitted_at:     t.submitted_at     || null,
+          })
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      toast(`Trial marked as ${status}`, 'success');
+      writeLog({
+        level: 'info', status: 'success',
+        module: 'trial', source: 'quickStatusTrial',
+        message: `Trial status → ${status}: ${t.name} (${t.email})`,
+        meta: {
+          action: 'status_change', id,
+          before: { status: t.status },
+          after:  { status },
+          name:    t.name    || null,
+          email:   t.email   || null,
+          company: t.company || null,
+          trial_start_date: t.trial_start_date?.split('T')[0] || null,
+          trial_end_date:   t.trial_end_date?.split('T')[0]   || null
+        }
+      });
+      _trialsLoaded = false;
+      await loadTrials(true);
+    } catch(e) {
+      toast('Error: ' + e.message, 'error');
+      writeLog({
+        level: 'error', status: 'failure',
+        module: 'trial', source: 'quickStatusTrial',
+        message: `Failed to update trial status: ${e.message}`,
+        meta: {
+          action: 'status_change', id,
+          before: { status: t.status },
+          after:  { status },
+          name:    t.name    || null,
+          email:   t.email   || null,
+          company: t.company || null
+        }
+      });
+    }
+  }
+
+  function deleteTrial(id, name) {
+    document.getElementById('confirmTitle').textContent = 'Delete Trial Request';
+    document.getElementById('confirmBody').innerHTML = `Permanently delete the trial request for <strong>${name}</strong>? This cannot be undone.`;
+    const btn = document.getElementById('confirmOkBtn');
+    btn.onclick = async () => {
+      try {
+        const res = await fetch(N8N_TRIAL_DELETE, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'delete', id })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        toast('Trial request deleted', 'success');
+        const deletedTrial = _trials.find(x => x.id == id);
+        writeLog({
+          level: 'warn', status: 'success',
+          module: 'trial', source: 'deleteTrial',
+          message: `Trial deleted: ${deletedTrial?.name || name} (${deletedTrial?.email || ''})`,
+          meta: {
+            action: 'deleted', id,
+            name:             deletedTrial?.name             || name,
+            email:            deletedTrial?.email            || null,
+            company:          deletedTrial?.company          || null,
+            phone:            deletedTrial?.phone            || null,
+            team_size:        deletedTrial?.team_size        || null,
+            status:           deletedTrial?.status           || null,
+            use_case:         deletedTrial?.use_case         || null,
+            source:           deletedTrial?.source           || null,
+            trial_start_date: deletedTrial?.trial_start_date || null,
+            trial_end_date:   deletedTrial?.trial_end_date   || null
+          }
+        });
+        closeConfirm();
+        _trialsLoaded = false;
+        await loadTrials(true);
+      } catch(e) {
+        toast('Error: ' + e.message, 'error');
+        const deletedTrial = _trials.find(x => x.id == id);
+        writeLog({
+          level: 'error', status: 'failure',
+          module: 'trial', source: 'deleteTrial',
+          message: `Failed to delete trial: ${e.message}`,
+          meta: {
+            action: 'deleted', id,
+            name:    deletedTrial?.name    || name,
+            email:   deletedTrial?.email   || null,
+            company: deletedTrial?.company || null,
+            status:  deletedTrial?.status  || null
+          }
+        });
+      }
+    };
+    document.getElementById('confirmModal').classList.add('open');
+  }
+
+  /* ── View Trial Modal ── */
+  function viewTrial(id) {
+    const t = _trials.find(x => x.id == id);
+    if (!t) return;
+    const fields = [
+      { key: 'Name',             val: t.name             || null },
+      { key: 'Email',            val: t.email            || null },
+      { key: 'Company',          val: t.company          || null },
+      { key: 'Phone',            val: t.phone            || null },
+      { key: 'Team Size',        val: t.team_size        || null },
+      { key: 'Status',           val: t.status           || null },
+      { key: 'Use Case',         val: t.use_case         || null },
+      { key: 'Source',           val: t.source           || null },
+      { key: 'Trial Start',      val: t.trial_start_date ? t.trial_start_date.slice(0,10) : null },
+      { key: 'Trial End',        val: t.trial_end_date   ? t.trial_end_date.slice(0,10)   : null },
+      { key: 'Submitted At',     val: t.submitted_at     ? new Date(t.submitted_at).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : null },
+      { key: 'Comments',         val: t.comments         || null },
+    ];
+    const statusBadgeMap = { new:'badge-new', approved:'badge-approved', rejected:'badge-rejected', expired:'badge-expired', converted:'badge-converted' };
+    const list = document.getElementById('viewTrialKvList');
+    list.innerHTML = fields.map(({ key, val }) => {
+      let valHtml;
+      if (val === null || val === undefined || val === '') {
+        valHtml = `<span class="meta-kv-val is-null">—</span>`;
+      } else if (key === 'Status') {
+        const cls = statusBadgeMap[val] || '';
+        valHtml = `<span class="badge ${cls}">${esc(val)}</span>`;
+      } else {
+        valHtml = `<span class="meta-kv-val">${esc(String(val))}</span>`;
+      }
+      return `<div class="meta-kv-row">
+        <div class="meta-kv-key">${esc(key)}</div>
+        <div style="flex:1;">${valHtml}</div>
+      </div>`;
+    }).join('');
+    document.getElementById('viewTrialModal').classList.add('open');
+  }
+  function closeViewTrialModal() {
+    document.getElementById('viewTrialModal').classList.remove('open');
+  }
+  document.getElementById('viewTrialModal').addEventListener('click', function(e) {
+    if (e.target === this) closeViewTrialModal();
+  });
+
+  /* ═════════════════════════════════════════════════════════ */
+
+  /* ── Download Trials as CSV ── */
+  function downloadTrialsCSV() {
+    if (!_trials.length) {
+      toast('No trial data to export — click Refresh first.', 'warn');
+      return;
+    }
+
+    const columns = [
+      { key: 'id',               label: 'ID' },
+      { key: 'name',             label: 'Name' },
+      { key: 'email',            label: 'Email' },
+      { key: 'company',          label: 'Company' },
+      { key: 'phone',            label: 'Phone' },
+      { key: 'team_size',        label: 'Team Size' },
+      { key: 'status',           label: 'Status' },
+      { key: 'use_case',         label: 'Use Case' },
+      { key: 'source',           label: 'Source' },
+      { key: 'trial_start_date', label: 'Trial Start Date' },
+      { key: 'trial_end_date',   label: 'Trial End Date' },
+      { key: 'submitted_at',     label: 'Submitted At' },
+      { key: 'comments',         label: 'Comments' },
+    ];
+
+    const escCSV = v => {
+      if (v === null || v === undefined) return '';
+      let s = String(v).replace(/\r\n|\r/g, '\n').trim();
+      // Strip ISO timestamps to date only (e.g. 2026-05-20T00:00:00.000Z → 2026-05-20)
+      s = s.replace(/^(\d{4}-\d{2}-\d{2})T[\d:.Z]+$/, '$1');
+      // Prefix with tab to prevent Excel auto-converting hyphenated ranges (e.g. 1-5 → Jan-5)
+      // Use ="value" pattern for cells that look like date ranges or numbers Excel might mangle
+      if (/^\d+-\d+$/.test(s) || /^\d+\+$/.test(s)) {
+        return `"=""${s.replace(/"/g, '""')}"""`;
+      }
+      return (s.includes(',') || s.includes('"') || s.includes('\n'))
+        ? '"' + s.replace(/"/g, '""') + '"'
+        : s;
+    };
+
+    const header = columns.map(c => escCSV(c.label)).join(',');
+    const rows   = _trials.map(t =>
+      columns.map(c => escCSV(t[c.key])).join(',')
+    );
+
+    const csv  = [header, ...rows].join('\r\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const ts   = new Date().toISOString().slice(0,10);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `trial-requests-${ts}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast(`Exported ${_trials.length} record${_trials.length !== 1 ? 's' : ''} to CSV`, 'success');
+  }
+
+  /* ═════════════════════════════════════════════════════════ */
+
+  function renderLogStats() {
+    const total    = _logs.length;
+    const errors   = _logs.filter(l => l.level === 'error').length;
+    const failures = _logs.filter(l => l.status === 'failure').length;
+    const success  = _logs.filter(l => l.status === 'success').length;
+    document.getElementById('logStatTotal').textContent    = total;
+    document.getElementById('logStatErrors').textContent   = errors;
+    document.getElementById('logStatFailures').textContent = failures;
+    document.getElementById('logStatSuccess').textContent  = success;
+  }
+
+  function resetLogsPage() { _logsPage = 1; renderLogsTable(); }
+  function goLogsPage(p)   { _logsPage = p; renderLogsTable(); }
+
+  /* ── Meta modal ── */
+  let _currentMetaObj = null;
+
+  function copyMetaJson() {
+    if (!_currentMetaObj) return;
+    const btn = document.getElementById('metaCopyBtn');
+    navigator.clipboard.writeText(JSON.stringify(_currentMetaObj, null, 2)).then(() => {
+      const orig = btn.innerHTML;
+      btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Copied!';
+      btn.style.color = 'var(--accent)';
+      btn.style.borderColor = 'var(--accent)';
+      setTimeout(() => { btn.innerHTML = orig; btn.style.color = ''; btn.style.borderColor = ''; }, 2000);
+    }).catch(() => toast('Copy failed', 'error'));
+  }
+
+  function showMetaModal(metaObj) {
+    if (typeof metaObj === 'string') {
+      try { metaObj = JSON.parse(metaObj); } catch(e) { metaObj = { raw: metaObj }; }
+    }
+    _currentMetaObj = metaObj;
+    const list = document.getElementById('metaKvList');
+    if (!metaObj || !Object.keys(metaObj).length) {
+      list.innerHTML = `<div style="text-align:center;padding:18px 0;font-size:.8rem;color:var(--muted);">No meta data available.</div>`;
+    } else {
+      function syntaxHighlight(obj) {
+        const json = JSON.stringify(obj, null, 2);
+        return json.replace(/("(\u[a-zA-Z0-9]{4}|\[^u]|[^\"])*"(\s*:)?|(true|false|null)|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, match => {
+          if (/^"/.test(match)) {
+            if (/:$/.test(match)) return `<span class="j-key">${match}</span>`;
+            return `<span class="j-str">${match}</span>`;
+          }
+          if (/true|false/.test(match)) return `<span class="j-bool">${match}</span>`;
+          if (/null/.test(match))       return `<span class="j-null">${match}</span>`;
+          return `<span class="j-num">${match}</span>`;
+        }).replace(/[{}\[\]]/g, m => `<span class="j-brace">${m}</span>`);
+      }
+      list.innerHTML = `<div class="meta-json-block">${syntaxHighlight(metaObj)}</div>`;
+    }
+    document.getElementById('metaModal').classList.add('open');
+  }
+  function closeMetaModal() {
+    document.getElementById('metaModal').classList.remove('open');
+  }
+  document.getElementById('metaModal').addEventListener('click', function(e) {
+    if (e.target === this) closeMetaModal();
+  });
+
+  function renderLogsTable() {
+    const tbody      = document.getElementById('logsTableBody');
+    const levelFilt  = document.getElementById('logLevelFilter').value;
+    const statusFilt = document.getElementById('logStatusFilter').value;
+    const moduleFilt = document.getElementById('logModuleFilter').value;
+    const tenantFilt = document.getElementById('logTenantFilter').value;
+    const search     = (document.getElementById('logSearch').value || '').toLowerCase();
+
+    let rows = _logs;
+    if (levelFilt)  rows = rows.filter(l => l.level     === levelFilt);
+    if (statusFilt) rows = rows.filter(l => l.status    === statusFilt);
+    if (moduleFilt) rows = rows.filter(l => l.module    === moduleFilt);
+    if (tenantFilt) rows = rows.filter(l => l.tenant_id === tenantFilt);
+    if (search)     rows = rows.filter(l =>
+      (l.message   || '').toLowerCase().includes(search) ||
+      (l.source    || '').toLowerCase().includes(search) ||
+      (l.user_id   || '').toLowerCase().includes(search) ||
+      (l.tenant_id || '').toLowerCase().includes(search)
+    );
+
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
+        <p>No log entries match</p><p class="empty-sub">Try adjusting the filters.</p>
+      </div></td></tr>`;
+      document.getElementById('logsPagBar').style.display = 'none';
+      return;
+    }
+
+    const totalPages = Math.ceil(rows.length / LOGS_PER_PAGE);
+    if (_logsPage > totalPages) _logsPage = totalPages;
+    const start = (_logsPage - 1) * LOGS_PER_PAGE;
+    const page  = rows.slice(start, start + LOGS_PER_PAGE);
+
+    tbody.innerHTML = page.map(l => {
+      const time   = l.created_at ? new Date(l.created_at).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
+      const level  = l.level  ? `<span class="badge badge-${l.level}">${l.level}</span>`   : '<span class="mono">—</span>';
+      const status = l.status ? `<span class="badge badge-${l.status}">${l.status}</span>` : '<span class="mono" style="color:var(--muted);font-size:.7rem;">—</span>';
+      const tenant = l.tenant_id
+        ? `<span class="tenant-chip">${esc(l.tenant_id)}</span>`
+        : '<span class="mono" style="color:var(--muted);font-size:.7rem;">—</span>';
+      let metaObj = null;
+      if (l.meta) {
+        try { metaObj = typeof l.meta === 'string' ? JSON.parse(l.meta) : l.meta; } catch(e) { metaObj = { raw: l.meta }; }
+      }
+      const meta = metaObj
+        ? `<span class="meta-pill" onclick='showMetaModal(${esc(JSON.stringify(metaObj))})'>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            meta
+          </span>`
+        : '<span class="mono" style="color:var(--muted);font-size:.7rem;">—</span>';
+      return `<tr>
+        <td><span class="mono" style="font-size:.7rem;">${time}</span></td>
+        <td>${level}</td>
+        <td>${tenant}</td>
+        <td>${status}</td>
+        <td><span style="font-size:.78rem;font-weight:500;">${esc(l.module||'—')}</span></td>
+        <td><span class="mono" style="font-size:.7rem;color:var(--muted);">${esc(l.source||'—')}</span></td>
+        <td><span style="font-size:.75rem;">${esc(l.user_id||'—')}</span></td>
+        <td><span style="font-size:.79rem;">${esc(l.message||'—')}</span></td>
+        <td>${meta}</td>
+      </tr>`;
+    }).join('');
+
+    /* ── Pagination bar ── */
+    const bar  = document.getElementById('logsPagBar');
+    const info = document.getElementById('logsPagInfo');
+    const btns = document.getElementById('logsPagBtns');
+    bar.style.display = 'flex';
+    info.textContent  = `${start + 1}–${Math.min(start + LOGS_PER_PAGE, rows.length)} of ${rows.length}`;
+
+    let pages = [];
+    if (totalPages <= 7) {
+      pages = Array.from({length: totalPages}, (_, i) => i + 1);
+    } else {
+      pages = [1];
+      if (_logsPage > 3) pages.push('…');
+      for (let i = Math.max(2, _logsPage - 1); i <= Math.min(totalPages - 1, _logsPage + 1); i++) pages.push(i);
+      if (_logsPage < totalPages - 2) pages.push('…');
+      pages.push(totalPages);
+    }
+
+    btns.innerHTML =
+      `<button class="page-btn" onclick="goLogsPage(${_logsPage - 1})" ${_logsPage === 1 ? 'disabled' : ''}>‹</button>` +
+      pages.map(p => p === '…'
+        ? `<span class="page-btn" style="cursor:default;opacity:.4;">…</span>`
+        : `<button class="page-btn ${p === _logsPage ? 'active' : ''}" onclick="goLogsPage(${p})">${p}</button>`
+      ).join('') +
+      `<button class="page-btn" onclick="goLogsPage(${_logsPage + 1})" ${_logsPage === totalPages ? 'disabled' : ''}>›</button>`;
+  }
 </script>
 </body>
 </html>
